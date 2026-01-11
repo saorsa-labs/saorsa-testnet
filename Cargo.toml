@@ -1,76 +1,85 @@
-[package]
-name = "saorsa-testnet"
+[workspace]
+resolver = "2"
+members = [
+    "crates/quic-test",
+    # Future test modules:
+    # "crates/gossip-test",
+    # "crates/core-test",
+    # "crates/node-test",
+]
+
+[workspace.package]
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+rust-version = "1.85.0"
+license = "MIT OR Apache-2.0"
 authors = ["David Irvine <david.irvine@saorsalabs.com>"]
-description = "Comprehensive testing and monitoring tool for Saorsa P2P network"
-license = "AGPL-3.0-or-later"
 repository = "https://github.com/dirvine/saorsa-testnet"
-keywords = ["p2p", "testing", "monitoring", "nat-traversal", "network"]
-categories = ["network-programming", "command-line-utilities", "development-tools"]
 
-[[bin]]
-name = "saorsa-testnet"
-path = "src/main.rs"
+[workspace.dependencies]
+# Core P2P libraries
+ant-quic = "0.15.2"
+saorsa-gossip-transport = "0.1.22"
+saorsa-gossip-pubsub = "0.1.22"
+saorsa-gossip-membership = "0.1.22"
+saorsa-gossip-types = "0.1.22"
+saorsa-gossip-coordinator = "0.1.22"
+saorsa-gossip-identity = "0.1.22"
+saorsa-gossip-crdt-sync = "0.1.22"
+saorsa-gossip-groups = "0.1.22"
+saorsa-gossip-rendezvous = "0.1.22"
 
-[dependencies]
-# Core dependencies
-saorsa-core = { version = "0.3.7", features = ["metrics"] }
-ant-quic = { version = "0.8.6", features = ["prometheus"] }
-anyhow = "1.0"
-tokio = { version = "1.38", features = ["full"] }
+# Async runtime
+tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
+futures = "0.3"
+futures-util = "0.3"
 
-# CLI and TUI
-clap = { version = "4.5", features = ["derive", "env", "color"] }
-ratatui = { version = "0.29", features = ["all-widgets"] }
-crossterm = "0.28"
-colored = "2.1"
+# Web/HTTP
+warp = "0.3"
+axum = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 
-# Metrics and monitoring
-prometheus = "0.13"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-csv = "1.3"
+# TUI
+ratatui = "0.29"
+crossterm = { version = "0.28", features = ["event-stream"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Utilities
+dashmap = "6"
+rand = "0.8"
+sha2 = "0.10"
+hex = "0.4"
+bytes = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
+humantime-serde = "1"
+hostname = "0.4"
+dirs = "5.0"
+local-ip-address = "0.6"
 
 # Logging
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
-tracing-appender = "0.2"
+tracing-subscriber = "0.3"
 
-# Network and deployment
-reqwest = { version = "0.12", features = ["json", "stream"] }
-ssh2 = "0.9"
-octocrab = "0.41"  # GitHub API client
+# TLS
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 
-# Data structures and utilities
-dashmap = "6.0"
-parking_lot = "0.12"
-bytes = "1.5"
-uuid = { version = "1.8", features = ["v4", "serde"] }
-rand = "0.8"
-
-# Missing dependencies for compilation
-hyper = { version = "0.14", features = ["full"] }
-futures = "0.3"
-shellexpand = "3.1"
-tempfile = "3.10"
-
-# Testing scenarios
-proptest = "1.4"
-criterion = { version = "0.5", features = ["html_reports"] }
-
-[dev-dependencies]
-tempfile = "3.10"
-mockito = "1.4"
-wiremock = "0.6"
-
-[features]
-default = ["tui", "deployment"]
-tui = []
-deployment = []
-benchmark = []
+# Embedded assets
+rust-embed = "8"
+mime_guess = "2"
 
 [profile.release]
 opt-level = 3
@@ -80,6 +89,3 @@ strip = true
 
 [profile.test]
 opt-level = 2
-
-[profile.bench]
-inherits = "release"

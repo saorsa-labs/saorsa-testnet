@@ -1,0 +1,329 @@
+# Docker NAT Emulation Infrastructure for saorsa-testnet
+# This simulates various NAT types for testing ant-quic NAT traversal
+#
+# Network Topology:
+#   nat-external (172.20.0.0/16) - Public network simulation
+#   internal-X.0 (10.100.X.0/24) - Private networks behind each NAT
+#
+# Usage:
+#   docker compose up -d                    # Start all
+#   docker compose up -d nat-fullcone       # Start specific NAT
+#   docker compose down                     # Stop all
+
+version: "3.8"
+
+networks:
+  # External network - simulates public internet
+  nat-external:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+  # Internal networks - one behind each NAT type
+  internal-fullcone:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.100.1.0/24
+
+  internal-restricted:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.100.2.0/24
+
+  internal-portrestricted:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.100.3.0/24
+
+  internal-symmetric:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.100.4.0/24
+
+  internal-cgnat:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.100.5.0/24
+
+services:
+  # ============================================================
+  # FULL CONE NAT (EIM + EIF)
+  # Most permissive - any external host can reach internal once mapped
+  # ============================================================
+  nat-fullcone:
+    build:
+      context: ./nat-fullcone
+    container_name: nat-fullcone
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    sysctls:
+      - net.ipv4.ip_forward=1
+    networks:
+      nat-external:
+        ipv4_address: 172.20.1.1
+      internal-fullcone:
+        ipv4_address: 10.100.1.1
+    restart: unless-stopped
+
+  node-fullcone:
+    image: alpine:3.19
+    container_name: node-fullcone
+    depends_on:
+      - nat-fullcone
+    networks:
+      internal-fullcone:
+        ipv4_address: 10.100.1.10
+    volumes:
+      - ./bin:/opt/bin:ro
+      - fullcone-data:/data
+    command: >
+      sh -c "
+        ip route del default 2>/dev/null || true;
+        ip route add default via 10.100.1.1;
+        if [ -f /opt/bin/saorsa-quic-test ]; then
+          /opt/bin/saorsa-quic-test --quiet --registry-url http://172.20.100.1:8080;
+        else
+          echo 'Test binary not found, sleeping...';
+          sleep infinity;
+        fi
+      "
+    cap_add:
+      - NET_ADMIN
+    restart: unless-stopped
+
+  # ============================================================
+  # ADDRESS-RESTRICTED NAT (EIM + ADF)
+  # Only accepts packets from IPs we've previously sent to
+  # ============================================================
+  nat-restricted:
+    build:
+      context: ./nat-restricted
+    container_name: nat-restricted
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    sysctls:
+      - net.ipv4.ip_forward=1
+    networks:
+      nat-external:
+        ipv4_address: 172.20.2.1
+      internal-restricted:
+        ipv4_address: 10.100.2.1
+    restart: unless-stopped
+
+  node-restricted:
+    image: alpine:3.19
+    container_name: node-restricted
+    depends_on:
+      - nat-restricted
+    networks:
+      internal-restricted:
+        ipv4_address: 10.100.2.10
+    volumes:
+      - ./bin:/opt/bin:ro
+      - restricted-data:/data
+    command: >
+      sh -c "
+        ip route del default 2>/dev/null || true;
+        ip route add default via 10.100.2.1;
+        if [ -f /opt/bin/saorsa-quic-test ]; then
+          /opt/bin/saorsa-quic-test --quiet --registry-url http://172.20.100.1:8080;
+        else
+          echo 'Test binary not found, sleeping...';
+          sleep infinity;
+        fi
+      "
+    cap_add:
+      - NET_ADMIN
+    restart: unless-stopped
+
+  # ============================================================
+  # PORT-RESTRICTED NAT (EIM + APDF)
+  # Only accepts packets from exact IP:port we've sent to
+  # ============================================================
+  nat-portrestricted:
+    build:
+      context: ./nat-portrestricted
+    container_name: nat-portrestricted
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    sysctls:
+      - net.ipv4.ip_forward=1
+    networks:
+      nat-external:
+        ipv4_address: 172.20.3.1
+      internal-portrestricted:
+        ipv4_address: 10.100.3.1
+    restart: unless-stopped
+
+  node-portrestricted:
+    image: alpine:3.19
+    container_name: node-portrestricted
+    depends_on:
+      - nat-portrestricted
+    networks:
+      internal-portrestricted:
+        ipv4_address: 10.100.3.10
+    volumes:
+      - ./bin:/opt/bin:ro
+      - portrestricted-data:/data
+    command: >
+      sh -c "
+        ip route del default 2>/dev/null || true;
+        ip route add default via 10.100.3.1;
+        if [ -f /opt/bin/saorsa-quic-test ]; then
+          /opt/bin/saorsa-quic-test --quiet --registry-url http://172.20.100.1:8080;
+        else
+          echo 'Test binary not found, sleeping...';
+          sleep infinity;
+        fi
+      "
+    cap_add:
+      - NET_ADMIN
+    restart: unless-stopped
+
+  # ============================================================
+  # SYMMETRIC NAT (APDM + APDF)
+  # Different external port for each destination - hardest to traverse
+  # ============================================================
+  nat-symmetric:
+    build:
+      context: ./nat-symmetric
+    container_name: nat-symmetric
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    sysctls:
+      - net.ipv4.ip_forward=1
+    networks:
+      nat-external:
+        ipv4_address: 172.20.4.1
+      internal-symmetric:
+        ipv4_address: 10.100.4.1
+    restart: unless-stopped
+
+  node-symmetric:
+    image: alpine:3.19
+    container_name: node-symmetric
+    depends_on:
+      - nat-symmetric
+    networks:
+      internal-symmetric:
+        ipv4_address: 10.100.4.10
+    volumes:
+      - ./bin:/opt/bin:ro
+      - symmetric-data:/data
+    command: >
+      sh -c "
+        ip route del default 2>/dev/null || true;
+        ip route add default via 10.100.4.1;
+        if [ -f /opt/bin/saorsa-quic-test ]; then
+          /opt/bin/saorsa-quic-test --quiet --registry-url http://172.20.100.1:8080;
+        else
+          echo 'Test binary not found, sleeping...';
+          sleep infinity;
+        fi
+      "
+    cap_add:
+      - NET_ADMIN
+    restart: unless-stopped
+
+  # ============================================================
+  # CGNAT (Carrier-Grade NAT)
+  # Shared external IP, limited port range
+  # ============================================================
+  nat-cgnat:
+    build:
+      context: ./nat-cgnat
+    container_name: nat-cgnat
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    sysctls:
+      - net.ipv4.ip_forward=1
+      # Limited port range for CGNAT simulation
+      - net.ipv4.ip_local_port_range=32768 33023
+    networks:
+      nat-external:
+        ipv4_address: 172.20.5.1
+      internal-cgnat:
+        ipv4_address: 10.100.5.1
+    restart: unless-stopped
+
+  node-cgnat:
+    image: alpine:3.19
+    container_name: node-cgnat
+    depends_on:
+      - nat-cgnat
+    networks:
+      internal-cgnat:
+        ipv4_address: 10.100.5.10
+    volumes:
+      - ./bin:/opt/bin:ro
+      - cgnat-data:/data
+    command: >
+      sh -c "
+        ip route del default 2>/dev/null || true;
+        ip route add default via 10.100.5.1;
+        if [ -f /opt/bin/saorsa-quic-test ]; then
+          /opt/bin/saorsa-quic-test --quiet --registry-url http://172.20.100.1:8080;
+        else
+          echo 'Test binary not found, sleeping...';
+          sleep infinity;
+        fi
+      "
+    cap_add:
+      - NET_ADMIN
+    restart: unless-stopped
+
+  # ============================================================
+  # PUBLIC NODE (No NAT - acts as registry and relay)
+  # ============================================================
+  node-public:
+    image: alpine:3.19
+    container_name: node-public
+    networks:
+      nat-external:
+        ipv4_address: 172.20.100.1
+    ports:
+      - "8080:8080"    # Registry HTTP
+      - "9001:9001/udp" # QUIC port
+    volumes:
+      - ./bin:/opt/bin:ro
+      - public-data:/data
+    command: >
+      sh -c "
+        if [ -f /opt/bin/saorsa-quic-test ]; then
+          /opt/bin/saorsa-quic-test --registry --port 8080 --quic-port 9001;
+        else
+          echo 'Test binary not found, sleeping...';
+          sleep infinity;
+        fi
+      "
+    restart: unless-stopped
+
+volumes:
+  fullcone-data:
+  restricted-data:
+  portrestricted-data:
+  symmetric-data:
+  cgnat-data:
+  public-data:

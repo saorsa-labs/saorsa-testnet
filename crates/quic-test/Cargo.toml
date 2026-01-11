@@ -1,0 +1,117 @@
+[package]
+name = "saorsa-quic-test"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "QUIC and NAT traversal testing infrastructure for Saorsa P2P network"
+keywords = ["quic", "nat-traversal", "p2p", "testing", "tui"]
+categories = ["network-programming", "command-line-utilities"]
+
+[dependencies]
+# Core ant-quic library (from crates.io)
+ant-quic.workspace = true
+
+# Web server for registry API
+warp.workspace = true
+futures-util.workspace = true
+
+# TUI framework
+ratatui.workspace = true
+crossterm.workspace = true
+
+# Async runtime
+tokio.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+
+# HTTP client for registry communication
+reqwest.workspace = true
+
+# HTTP server for test agent
+axum.workspace = true
+
+# Get hostname for agent ID
+hostname.workspace = true
+
+# WebSocket client for registry event subscription
+tokio-tungstenite.workspace = true
+
+# Error handling
+anyhow.workspace = true
+
+# Concurrent data structures
+dashmap.workspace = true
+
+# Random number generation
+rand.workspace = true
+
+# Cryptographic hashing for test packets
+sha2.workspace = true
+
+# Hex encoding for peer IDs
+hex.workspace = true
+
+# Binary data for gossip transport
+bytes.workspace = true
+
+# Logging
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# TLS crypto provider (required for rustls initialization)
+rustls.workspace = true
+
+# Gossip protocol for decentralized peer/relay discovery
+saorsa-gossip-transport.workspace = true
+saorsa-gossip-pubsub.workspace = true
+saorsa-gossip-membership.workspace = true
+saorsa-gossip-types.workspace = true
+saorsa-gossip-coordinator.workspace = true
+saorsa-gossip-identity.workspace = true
+saorsa-gossip-crdt-sync.workspace = true
+saorsa-gossip-groups.workspace = true
+saorsa-gossip-rendezvous.workspace = true
+
+# Timestamp handling for history persistence
+chrono.workspace = true
+
+# UUID for run/attempt IDs
+uuid.workspace = true
+
+# Human-readable duration serialization
+humantime-serde.workspace = true
+
+# Embedded static files for web dashboard
+rust-embed.workspace = true
+mime_guess.workspace = true
+
+# Platform-specific paths for cache directory
+dirs.workspace = true
+
+# CLI argument parsing for orchestrator binary
+clap.workspace = true
+
+# Local IP address discovery for local agents
+local-ip-address.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[[bin]]
+name = "saorsa-quic-test"
+path = "src/main.rs"
+
+[[bin]]
+name = "saorsa-testctl"
+path = "src/bin/saorsa-testctl.rs"
+
+[[bin]]
+name = "test-agent"
+path = "src/bin/test-agent.rs"

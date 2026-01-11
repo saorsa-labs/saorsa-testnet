@@ -1,0 +1,399 @@
+# Simple Local Testnet - 20 Nodes without NAT Simulation
+# For testing P2P connectivity, mutex issues, and data transfer on macOS
+#
+# This is a simplified version that doesn't require privileged mode
+# Use docker-compose.yml for full NAT simulation on Linux
+#
+# Usage:
+#   docker compose -f docker-compose-simple.yml up -d
+#   docker compose -f docker-compose-simple.yml logs -f
+#   docker compose -f docker-compose-simple.yml down -v
+
+networks:
+  testnet:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+services:
+  # Registry server
+  registry:
+    image: alpine:3.19
+    container_name: testnet-registry
+    hostname: registry
+    networks:
+      testnet:
+        ipv4_address: 172.30.0.10
+    ports:
+      - "18080:8080"
+      - "19001:9001/udp"
+    volumes:
+      - ./bin:/opt/bin:ro
+      - registry-data:/data
+    working_dir: /data
+    environment:
+      - RUST_LOG=info
+    command: >
+      sh -c "
+        echo 'Starting registry server...';
+        if [ -f /opt/bin/saorsa-quic-test ]; then
+          /opt/bin/saorsa-quic-test --registry --port 8080 --quic-port 9001;
+        else
+          echo 'ERROR: Test binary not found';
+          sleep infinity;
+        fi
+      "
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/api/stats"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Public nodes 1-5
+  node-1:
+    image: alpine:3.19
+    container_name: testnet-node-1
+    hostname: node-1
+    depends_on:
+      registry:
+        condition: service_healthy
+    networks:
+      testnet:
+        ipv4_address: 172.30.0.21
+    volumes:
+      - ./bin:/opt/bin:ro
+    environment:
+      - RUST_LOG=info
+    command: sh -c "sleep 5 && /opt/bin/saorsa-quic-test --quiet --local-only --registry-url http://172.30.0.10:8080 --max-peers 20"
+    restart: unless-stopped
+
+  node-2:
+    image: alpine:3.19
+    container_name: testnet-node-2
+    hostname: node-2
+    depends_on:
+      registry:
+        condition: service_healthy
+    networks:
+      testnet:
+        ipv4_address: 172.30.0.22
+    volumes:
+      - ./bin:/opt/bin:ro
+    environment:
+      - RUST_LOG=info
+    command: sh -c "sleep 6 && /opt/bin/saorsa-quic-test --quiet --local-only --registry-url http://172.30.0.10:8080 --max-peers 20"
+    restart: unless-stopped
+
+  node-3:
+    image: alpine:3.19
+    container_name: testnet-node-3
+    hostname: node-3
+    depends_on:
+      registry:
+        condition: service_healthy
+    networks:
+      testnet:
+        ipv4_address: 172.30.0.23
+    volumes:
+      - ./bin:/opt/bin:ro
+    environment:
+      - RUST_LOG=info
+    command: sh -c "sleep 7 && /opt/bin/saorsa-quic-test --quiet --local-only --registry-url http://172.30.0.10:8080 --max-peers 20"
+    restart: unless-stopped
+
+  node-4:
+    image: alpine:3.19
+    container_name: testnet-node-4
+    hostname: node-4
+    depends_on:
+      registry:
+        condition: service_healthy
+    networks:
+      testnet:
+        ipv4_address: 172.30.0.24
+    volumes:
+      - ./bin:/opt/bin:ro
+    environment:
+      - RUST_LOG=info
+    command: sh -c "sleep 8 && /opt/bin/saorsa-quic-test --quiet --local-only --registry-url http://172.30.0.10:8080 --max-peers 20"
+    restart: unless-stopped
+
+  node-5:
+    image: alpine:3.19
+    container_name: testnet-node-5
+    hostname: node-5
+    depends_on:
+      registry:
+        condition: service_healthy
+    networks:
+      testnet:
+        ipv4_address: 172.30.0.25
+    volumes:
+      - ./bin:/opt/bin:ro
+    environment:
+      - RUST_LOG=info
+    command: sh -c "sleep 9 && /opt/bin/saorsa-quic-test --quiet --local-only --registry-url http://172.30.0.10:8080 --max-peers 20"
+    restart: unless-stopped
+
+  # Nodes 6-10
+  node-6:
+    image: alpine:3.19
+    container_name: testnet-node-6
+    hostname: node-6
+    depends_on:
+      registry:
+        condition: service_healthy
+    networks:
+      testnet:
+        ipv4_address: 172.30.0.26
+    volumes:
+      - ./bin:/opt/bin:ro
+    environment:
+      - RUST_LOG=info
+    command: sh -c "sleep 10 && /opt/bin/saorsa-quic-test --quiet --local-only --registry-url http://172.30.0.10:8080 --max-peers 20"
+    restart: unless-stopped
+
+  node-7:
+    image: alpine:3.19
+    container_name: testnet-node-7
+    hostname: node-7
+    depends_on:
+      registry:
+        condition: service_healthy
+    networks:
+      testnet:
+        ipv4_address: 172.30.0.27
+    volumes:
+      - ./bin:/opt/bin:ro
+    environment:
+      - RUST_LOG=info
+    command: sh -c "sleep 11 && /opt/bin/saorsa-quic-test --quiet --local-only --registry-url http://172.30.0.10:8080 --max-peers 20"
+    restart: unless-stopped
+
+  node-8:
+    image: alpine:3.19
+    container_name: testnet-node-8
+    hostname: node-8
+    depends_on:
+      registry:
+        condition: service_healthy
+    networks:
+      testnet:
+        ipv4_address: 172.30.0.28
+    volumes:
+      - ./bin:/opt/bin:ro
+    environment:
+      - RUST_LOG=info
+    command: sh -c "sleep 12 && /opt/bin/saorsa-quic-test --quiet --local-only --registry-url http://172.30.0.10:8080 --max-peers 20"
+    restart: unless-stopped
+
+  node-9:
+    image: alpine:3.19
+    container_name: testnet-node-9
+    hostname: node-9
+    depends_on:
+      registry:
+        condition: service_healthy
+    networks:
+      testnet:
+        ipv4_address: 172.30.0.29
+    volumes:
+      - ./bin:/opt/bin:ro
+    environment:
+      - RUST_LOG=info
+    command: sh -c "sleep 13 && /opt/bin/saorsa-quic-test --quiet --local-only --registry-url http://172.30.0.10:8080 --max-peers 20"
+    restart: unless-stopped
+
+  node-10:
+    image: alpine:3.19
+    container_name: testnet-node-10
+    hostname: node-10
+    depends_on:
+      registry:
+        condition: service_healthy
+    networks:
+      testnet:
+        ipv4_address: 172.30.0.30
+    volumes:
+      - ./bin:/opt/bin:ro
+    environment:
+      - RUST_LOG=info
+    command: sh -c "sleep 14 && /opt/bin/saorsa-quic-test --quiet --local-only --registry-url http://172.30.0.10:8080 --max-peers 20"
+    restart: unless-stopped
+
+  # Nodes 11-15
+  node-11:
+    image: alpine:3.19
+    container_name: testnet-node-11
+    hostname: node-11
+    depends_on:
+      registry:
+        condition: service_healthy
+    networks:
+      testnet:
+        ipv4_address: 172.30.0.31
+    volumes:
+      - ./bin:/opt/bin:ro
+    environment:
+      - RUST_LOG=info
+    command: sh -c "sleep 15 && /opt/bin/saorsa-quic-test --quiet --local-only --registry-url http://172.30.0.10:8080 --max-peers 20"
+    restart: unless-stopped
+
+  node-12:
+    image: alpine:3.19
+    container_name: testnet-node-12
+    hostname: node-12
+    depends_on:
+      registry:
+        condition: service_healthy
+    networks:
+      testnet:
+        ipv4_address: 172.30.0.32
+    volumes:
+      - ./bin:/opt/bin:ro
+    environment:
+      - RUST_LOG=info
+    command: sh -c "sleep 16 && /opt/bin/saorsa-quic-test --quiet --local-only --registry-url http://172.30.0.10:8080 --max-peers 20"
+    restart: unless-stopped
+
+  node-13:
+    image: alpine:3.19
+    container_name: testnet-node-13
+    hostname: node-13
+    depends_on:
+      registry:
+        condition: service_healthy
+    networks:
+      testnet:
+        ipv4_address: 172.30.0.33
+    volumes:
+      - ./bin:/opt/bin:ro
+    environment:
+      - RUST_LOG=info
+    command: sh -c "sleep 17 && /opt/bin/saorsa-quic-test --quiet --local-only --registry-url http://172.30.0.10:8080 --max-peers 20"
+    restart: unless-stopped
+
+  node-14:
+    image: alpine:3.19
+    container_name: testnet-node-14
+    hostname: node-14
+    depends_on:
+      registry:
+        condition: service_healthy
+    networks:
+      testnet:
+        ipv4_address: 172.30.0.34
+    volumes:
+      - ./bin:/opt/bin:ro
+    environment:
+      - RUST_LOG=info
+    command: sh -c "sleep 18 && /opt/bin/saorsa-quic-test --quiet --local-only --registry-url http://172.30.0.10:8080 --max-peers 20"
+    restart: unless-stopped
+
+  node-15:
+    image: alpine:3.19
+    container_name: testnet-node-15
+    hostname: node-15
+    depends_on:
+      registry:
+        condition: service_healthy
+    networks:
+      testnet:
+        ipv4_address: 172.30.0.35
+    volumes:
+      - ./bin:/opt/bin:ro
+    environment:
+      - RUST_LOG=info
+    command: sh -c "sleep 19 && /opt/bin/saorsa-quic-test --quiet --local-only --registry-url http://172.30.0.10:8080 --max-peers 20"
+    restart: unless-stopped
+
+  # Nodes 16-20
+  node-16:
+    image: alpine:3.19
+    container_name: testnet-node-16
+    hostname: node-16
+    depends_on:
+      registry:
+        condition: service_healthy
+    networks:
+      testnet:
+        ipv4_address: 172.30.0.36
+    volumes:
+      - ./bin:/opt/bin:ro
+    environment:
+      - RUST_LOG=info
+    command: sh -c "sleep 20 && /opt/bin/saorsa-quic-test --quiet --local-only --registry-url http://172.30.0.10:8080 --max-peers 20"
+    restart: unless-stopped
+
+  node-17:
+    image: alpine:3.19
+    container_name: testnet-node-17
+    hostname: node-17
+    depends_on:
+      registry:
+        condition: service_healthy
+    networks:
+      testnet:
+        ipv4_address: 172.30.0.37
+    volumes:
+      - ./bin:/opt/bin:ro
+    environment:
+      - RUST_LOG=info
+    command: sh -c "sleep 21 && /opt/bin/saorsa-quic-test --quiet --local-only --registry-url http://172.30.0.10:8080 --max-peers 20"
+    restart: unless-stopped
+
+  node-18:
+    image: alpine:3.19
+    container_name: testnet-node-18
+    hostname: node-18
+    depends_on:
+      registry:
+        condition: service_healthy
+    networks:
+      testnet:
+        ipv4_address: 172.30.0.38
+    volumes:
+      - ./bin:/opt/bin:ro
+    environment:
+      - RUST_LOG=info
+    command: sh -c "sleep 22 && /opt/bin/saorsa-quic-test --quiet --local-only --registry-url http://172.30.0.10:8080 --max-peers 20"
+    restart: unless-stopped
+
+  node-19:
+    image: alpine:3.19
+    container_name: testnet-node-19
+    hostname: node-19
+    depends_on:
+      registry:
+        condition: service_healthy
+    networks:
+      testnet:
+        ipv4_address: 172.30.0.39
+    volumes:
+      - ./bin:/opt/bin:ro
+    environment:
+      - RUST_LOG=info
+    command: sh -c "sleep 23 && /opt/bin/saorsa-quic-test --quiet --local-only --registry-url http://172.30.0.10:8080 --max-peers 20"
+    restart: unless-stopped
+
+  node-20:
+    image: alpine:3.19
+    container_name: testnet-node-20
+    hostname: node-20
+    depends_on:
+      registry:
+        condition: service_healthy
+    networks:
+      testnet:
+        ipv4_address: 172.30.0.40
+    volumes:
+      - ./bin:/opt/bin:ro
+    environment:
+      - RUST_LOG=info
+    command: sh -c "sleep 24 && /opt/bin/saorsa-quic-test --quiet --local-only --registry-url http://172.30.0.10:8080 --max-peers 20"
+    restart: unless-stopped
+
+volumes:
+  registry-data:

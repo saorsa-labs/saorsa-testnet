@@ -1,244 +1,272 @@
-# Saorsa TestNet - Comprehensive P2P Network Testing Tool
+# Saorsa Testnet
 
-[![Code Quality: Excellent](https://img.shields.io/badge/Code_Quality-Excellent-brightgreen.svg)]()
-[![Warnings: 0](https://img.shields.io/badge/Warnings-0-success.svg)]()
-[![Build: Passing](https://img.shields.io/badge/Build-Passing-brightgreen.svg)]()
+Comprehensive testing infrastructure for the Saorsa P2P network ecosystem.
 
-A comprehensive testing and monitoring tool for the Saorsa P2P network, featuring adaptive networking, post-quantum cryptography, and real-time metrics collection.
+[![Build](https://img.shields.io/badge/Build-Passing-brightgreen.svg)]()
+[![Rust](https://img.shields.io/badge/Rust-1.85+-orange.svg)]()
+[![License](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)]()
 
-## Features
+## Overview
 
-### 🚀 Core Functionality
-- **Bootstrap & Worker Nodes**: Full P2P network simulation
-- **Adaptive Networking**: ML-driven routing optimization with Thompson Sampling
-- **Post-Quantum Cryptography**: ML-KEM-768, ML-DSA-65 support
-- **Real-time TUI Dashboard**: Monitor network performance live
-- **Prometheus Metrics**: Industry-standard metrics collection
+Saorsa Testnet is a centralized workspace for all P2P network testing binaries. It consolidates testing for:
 
-### 🔍 Advanced Testing
-- **Random Data Exchange**: Configurable cross-node communication patterns
-- **NAT Traversal Testing**: Full Cone, Restricted, Symmetric, CGNAT simulation
-- **Churn Simulation**: Dynamic node join/leave patterns
-- **Stress Testing**: Performance under high load
-- **Geographic Distribution**: Multi-region network simulation
+- **ant-quic** - QUIC transport with NAT traversal
+- **saorsa-gossip** - Gossip protocol and CRDT sync
+- **saorsa-core** - Core P2P library
+- **saorsa-node** - Full network nodes
 
-### 📊 Enhanced Metrics
-- **Cryptographic Operations**: ML-KEM-768, ML-DSA-65, ChaCha20Poly1305, X25519, BLAKE3
-- **Connection Types**: QUIC with post-quantum, TCP with TLS13, UDP quantum-resistant
-- **NAT Traversal**: Success rates by NAT type
-- **Data Exchange Patterns**: Size categories and peer types
-- **Performance Analytics**: Latency, throughput, success rates
+## Workspace Structure
+
+```
+saorsa-testnet/
+├── Cargo.toml                          # Workspace manifest
+├── crates/
+│   ├── quic-test/                      # QUIC and NAT traversal testing
+│   │   ├── src/
+│   │   │   ├── main.rs                 # saorsa-quic-test binary
+│   │   │   ├── bin/
+│   │   │   │   ├── saorsa-testctl.rs   # Test controller
+│   │   │   │   └── test-agent.rs       # VPS test agent
+│   │   │   ├── harness/                # Test harness framework
+│   │   │   ├── registry/               # Peer registry
+│   │   │   ├── tui/                    # Terminal UI
+│   │   │   └── ...
+│   │   └── Cargo.toml
+│   ├── gossip-test/                    # Gossip protocol testing (planned)
+│   ├── core-test/                      # Core library testing (planned)
+│   └── node-test/                      # Full node testing (planned)
+├── docs/
+│   └── infrastructure/
+│       └── VPS_INFRASTRUCTURE.md       # Complete VPS documentation
+└── .claude/
+    └── skills/
+        └── vps-test/                   # Autonomous VPS testing skill
+            └── SKILL.md
+```
 
 ## Quick Start
 
 ### Prerequisites
-- Rust 1.75+ with cargo
-- System dependencies for audio/video (for WebRTC features)
 
 ```bash
-# Ubuntu/Debian
-sudo apt-get install -y pkg-config libssl-dev libasound2-dev libpulse-dev libdbus-1-dev portaudio19-dev build-essential
+# Install cargo-zigbuild for cross-compilation
+cargo install cargo-zigbuild
+
+# Install zig (macOS)
+brew install zig
 ```
 
-### Build
+### Build Test Binaries
+
 ```bash
+# Standard build
 cargo build --release
+
+# Cross-compile for Linux VPS
+cargo zig build --release --target x86_64-unknown-linux-gnu
 ```
 
-### Run Bootstrap Node
+### Run QUIC Tests Locally
+
 ```bash
-./target/release/saorsa-testnet bootstrap --port 9000 --metrics --pqc
+# Run the main test orchestrator
+cargo run -p saorsa-quic-test -- --help
+
+# Run with TUI dashboard
+cargo run -p saorsa-quic-test -- --dashboard
+
+# Run test controller
+cargo run -p saorsa-quic-test --bin saorsa-testctl -- --help
 ```
 
-### Run Worker Node
+## Test Binaries
+
+| Binary | Description | Command |
+|--------|-------------|---------|
+| `saorsa-quic-test` | Main QUIC/NAT test orchestrator | `cargo run -p saorsa-quic-test` |
+| `saorsa-testctl` | Test controller for VPS deployments | `cargo run -p saorsa-quic-test --bin saorsa-testctl` |
+| `test-agent` | VPS agent for remote test execution | `cargo run -p saorsa-quic-test --bin test-agent` |
+
+## VPS Infrastructure
+
+10 nodes across 3 cloud providers with full NAT simulation:
+
+| Node | Provider | Role | NAT Type |
+|------|----------|------|----------|
+| saorsa-1 | Hetzner | Dashboard & Registry | - |
+| saorsa-2, 3 | DigitalOcean | Bootstrap Nodes | Direct |
+| saorsa-4 | DigitalOcean | NAT Simulation | Full Cone |
+| saorsa-5 | DigitalOcean | NAT Simulation | Address Restricted |
+| saorsa-6 | Hetzner | NAT Simulation | Port Restricted |
+| saorsa-7 | Hetzner | General Test | Direct |
+| saorsa-8 | Vultr | High Latency Test | Direct |
+| saorsa-9 | Vultr | High Latency Test | Direct |
+| saorsa-10 | Hetzner | NAT Simulation | Symmetric |
+
+See [docs/infrastructure/VPS_INFRASTRUCTURE.md](docs/infrastructure/VPS_INFRASTRUCTURE.md) for complete details including IP addresses, SSH access, and NAT configuration.
+
+## VPS Deployment
+
+### CRITICAL: No Remote Builds
+
+**NEVER build on VPS machines.** All binaries must be:
+1. Built locally using `cargo zig build`
+2. Uploaded via SCP
+
+### Deploy to All Nodes
+
 ```bash
-./target/release/saorsa-testnet worker --bootstrap 127.0.0.1:9000 --tui --metrics
+# Build for Linux
+cargo zig build --release --target x86_64-unknown-linux-gnu
+
+# Deploy
+BINARY="target/x86_64-unknown-linux-gnu/release/saorsa-quic-test"
+for n in {2..10}; do
+    scp "$BINARY" root@saorsa-$n.saorsalabs.com:/opt/saorsa-test/
+    ssh root@saorsa-$n.saorsalabs.com 'systemctl restart saorsa-quic-test'
+done
 ```
 
-## Usage Examples
+## VPS Test Skill
 
-### Local Network Testing
+The `/vps-test` Claude Code skill provides autonomous deployment and testing:
+
 ```bash
-# Start bootstrap with post-quantum crypto
-./target/release/saorsa-testnet bootstrap --port 9000 --metrics --metrics-port 9090 --pqc
-
-# Start worker with TUI dashboard
-./target/release/saorsa-testnet worker --bootstrap 127.0.0.1:9000 --tui --metrics --metrics-port 9091
-
-# View metrics
-curl http://127.0.0.1:9090/metrics  # Bootstrap metrics
-curl http://127.0.0.1:9091/metrics  # Worker metrics
+# In Claude Code session
+/vps-test start           # Interactive test setup with interview
+/vps-test status          # Show all active test loops
+/vps-test nodes           # List VPS infrastructure
+/vps-test diagnose saorsa-4   # Debug specific node
+/vps-test logs ant-quic   # View test logs
 ```
 
-### Automated Testing Scenarios
-```bash
-# NAT traversal testing
-./target/release/saorsa-testnet test --scenario nat-traversal --duration 30m --nodes 20
+Features:
+- Mandatory interview process before each test
+- Local-only builds with cargo-zigbuild
+- Automated fix cycles on failure
+- Graduated success verification (1hr, 6hr soak tests)
+- Voice notifications via 11Labs
 
-# Network churn simulation
-./target/release/saorsa-testnet test --scenario churn --duration 1h --nodes 50 --churn --churn-rate 5
+See [.claude/skills/vps-test/SKILL.md](.claude/skills/vps-test/SKILL.md) for complete documentation.
 
-# Stress testing
-./target/release/saorsa-testnet test --scenario stress --duration 15m --nodes 100
+## Test Modules
 
-# Geographic distribution testing  
-./target/release/saorsa-testnet test --scenario geographic --duration 45m --nodes 30
-```
+### quic-test (Active)
 
-### Cloud Deployment
-```bash
-# Deploy to DigitalOcean (requires DO_API_TOKEN)
-./target/release/saorsa-testnet deploy \
-    --regions nyc1,sfo3,ams3,sgp1 \
-    --nodes-per-region 5 \
-    --github-release v0.1.0
+Tests QUIC transport and NAT traversal:
+- **Connectivity Matrix**: All-to-all connection testing
+- **NAT Traversal**: Full Cone, Address Restricted, Port Restricted, Symmetric
+- **Throughput**: Bandwidth measurement across nodes
+- **Gossip Integration**: Message broadcast verification
 
-# Monitor remote cluster
-./target/release/saorsa-testnet monitor \
-    --cluster production-testnet \
-    --refresh 10s \
-    --export-logs ./cluster-metrics.csv
-```
+### gossip-test (Planned)
 
-## Enhanced Random Data Exchange
+Tests gossip protocol layer:
+- Message broadcast verification
+- CRDT state synchronization
+- Membership protocol
+- Epidemic spread analysis
 
-The testnet now features comprehensive random data exchange functionality:
+### core-test (Planned)
 
-### Data Types
-- **Telemetry**: 256-767 bytes - Network performance data
-- **Heartbeat**: 32-95 bytes - Node liveness indicators  
-- **Discovery**: 128-383 bytes - Peer discovery information
-- **Routing Update**: 64-191 bytes - Network topology changes
-- **Challenge**: 512-1535 bytes - Cryptographic challenges
+Tests saorsa-core library:
+- Integration test runner
+- Property-based tests
+- Stress tests
 
-### Cross-Node Communication
-- Nodes store data in DHT using ContentHash addressing
-- Other nodes randomly read shared data demonstrating cross-node communication
-- Configurable exchange frequencies (2-7 second intervals)
-- Size-based categorization (small, medium, large)
+### node-test (Planned)
 
-### Peer Types
-- **Bootstrap**: Network entry points
-- **Worker**: Standard network participants
-- **Relay**: NAT traversal assistance nodes
-
-## Metrics Collection
-
-### Cryptographic Operations
-- `worker_crypto_operations_total{algorithm, operation}`: Crypto operation counters
-  - Algorithms: ML-KEM-768, ML-DSA-65, ChaCha20Poly1305, X25519, BLAKE3
-  - Operations: encrypt, decrypt, sign, verify, encapsulate, decapsulate, derive, hash
-
-### Network Performance  
-- `worker_message_latency_seconds{operation}`: Message latency histograms
-- `worker_data_exchanges_total{peer_type, data_size}`: Data exchange counters
-- `worker_nat_traversal_attempts_total{type, result}`: NAT traversal success rates
-
-### Connection Types
-- `worker_connection_types{connection_type, encryption}`: Active connection distribution
-  - Types: quic, tcp, udp, relay
-  - Encryption: post_quantum, tls13, quantum_resistant, encrypted
-
-## Architecture
-
-### Components
-- **Node Layer**: Bootstrap and Worker node implementations
-- **Metrics Layer**: Prometheus metrics collection and HTTP endpoints  
-- **TUI Layer**: Real-time terminal dashboard using ratatui
-- **Testing Layer**: Automated scenario execution and validation
-- **Deployment Layer**: DigitalOcean cloud deployment automation
-- **Logging Layer**: Structured logging with aggregation capabilities
-
-### Dependencies
-- **saorsa-core**: Core P2P networking library with adaptive routing
-- **ant-quic**: QUIC transport with NAT traversal
-- **prometheus**: Metrics collection and exposition
-- **ratatui**: Terminal UI framework
-- **tokio**: Async runtime
-- **anyhow**: Error handling
-
-## Configuration
-
-### Environment Variables
-- `DO_API_TOKEN`: DigitalOcean API token for deployment
-- `RUST_LOG`: Logging level configuration
-
-### Command Line Options
-See `./target/release/saorsa-testnet --help` for complete options.
+Tests full saorsa-node:
+- Health check endpoint
+- Sync verification
+- Storage tests
+- Retrieval tests
 
 ## Development
 
-### Building from Source
+### Build Commands
+
 ```bash
-git clone <repository-url>
-cd saorsa-testnet
+# Check compilation
+cargo check
+
+# Run tests
+cargo test
+
+# Build release
 cargo build --release
+
+# Cross-compile for Linux
+cargo zig build --release --target x86_64-unknown-linux-gnu
+
+# Lint
+cargo clippy --all-targets -- -D warnings
+
+# Format
+cargo fmt --all
 ```
 
-### Running Tests
+### Adding New Test Modules
+
+1. Create new crate:
+   ```bash
+   mkdir -p crates/my-test/src
+   ```
+
+2. Add `Cargo.toml` using workspace dependencies:
+   ```toml
+   [package]
+   name = "saorsa-my-test"
+   version.workspace = true
+   edition.workspace = true
+
+   [dependencies]
+   tokio.workspace = true
+   anyhow.workspace = true
+   ```
+
+3. Add to workspace in root `Cargo.toml`:
+   ```toml
+   [workspace]
+   members = [
+       "crates/quic-test",
+       "crates/my-test",  # Add here
+   ]
+   ```
+
+## Registry API
+
+The registry at saorsa-1 provides peer discovery:
+
 ```bash
-cargo test
+# List registered peers
+curl https://saorsa-1.saorsalabs.com/api/peers
+
+# Health check
+curl https://saorsa-1.saorsalabs.com/health
+
+# Dashboard
+open https://saorsa-1.saorsalabs.com
 ```
 
-### Code Quality
-```bash
-# Format code
-cargo fmt
+## Metrics
 
-# Check for warnings (should show none)
-cargo clippy --all-features --all-targets --workspace -- -D warnings
+Prometheus metrics available at `/metrics` on each node:
 
-# Full quality check
-cargo clippy --all-features --all-targets --workspace -- -D warnings && cargo build --release --all-features
-```
+- `saorsa_connections_total` - Total connection attempts
+- `saorsa_nat_traversal_success` - NAT traversal success rate
+- `saorsa_gossip_messages_total` - Gossip messages sent/received
+- `saorsa_throughput_bytes` - Data transferred
 
-### 🏆 Recent Achievements
-- **Warning-Free Codebase**: Complete elimination of all Clippy warnings
-- **Production Ready**: Full codebase verified for production deployment
-- **Quality Standards**: Achieved highest code quality metrics
-- **Clean Architecture**: Well-structured, maintainable codebase
-- **Security Compliance**: No unsafe code patterns, proper error handling
-
-## Quality Assurance
-
-### 🏆 Code Quality Standards
-This project maintains the highest code quality standards:
-
-- **Zero Warnings**: Complete codebase passes `cargo clippy --all-features --all-targets --workspace -- -D warnings`
-- **Clean Builds**: All builds compile without errors or warnings
-- **Production Ready**: Codebase is ready for production deployment
-- **Security First**: No unsafe code, proper error handling throughout
-- **Performance Optimized**: Efficient algorithms and memory usage
-
-### ✅ Verification Commands
-```bash
-# Check code quality (should show no warnings)
-cargo clippy --all-features --all-targets --workspace -- -D warnings
-
-# Build for production
-cargo build --release --all-features
-
-# Run tests (when available)
-cargo test
-```
-
-### 📊 Code Quality Metrics
-- **Warning Count**: 0
-- **Error Count**: 0
-- **Build Success Rate**: 100%
-- **Code Quality Score**: Excellent
-- **Maintainability**: High
+Dashboard: https://saorsa-1.saorsalabs.com (Grafana)
 
 ## License
 
-Dual-licensed under:
-- AGPL-3.0 for open source use
-- Commercial license available - contact saorsalabs@gmail.com
+MIT OR Apache-2.0
 
-## Contributing
+## Related Projects
 
-This is part of the larger Saorsa ecosystem. For contributions and issues, please refer to the main Saorsa project repository.
-
----
-
-**Saorsa TestNet** - Comprehensive P2P Network Testing with Enhanced Metrics 🚀
+- [ant-quic](https://github.com/dirvine/ant-quic) - QUIC transport with NAT traversal
+- [saorsa-gossip](https://github.com/dirvine/saorsa-gossip) - Gossip protocol crates
+- [saorsa-core](https://github.com/dirvine/saorsa-core) - Core P2P library
+- [saorsa-node](https://github.com/dirvine/saorsa-node) - Full network node
