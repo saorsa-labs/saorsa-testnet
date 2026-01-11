@@ -1,14 +1,14 @@
 //! Terminal User Interface Module
 //!
-//! This module provides an interactive terminal UI for the ant-quic network
-//! test infrastructure. Users see real-time network status, connected peers,
+//! This module provides an interactive terminal UI for the Saorsa TestNet
+//! infrastructure. Users see real-time network status, connected peers,
 //! and traffic statistics.
 //!
 //! # Architecture
 //!
 //! ```text
 //! ╔══════════════════════════════════════════════════════════════════════════════╗
-//! ║                          ant-quic Network Test                               ║
+//! ║                            Saorsa TestNet                                    ║
 //! ║                         "We will be legion!!"                                ║
 //! ╠══════════════════════════════════════════════════════════════════════════════╣
 //! ║  YOUR NODE                                                                   ║

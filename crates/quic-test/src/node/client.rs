@@ -4053,8 +4053,8 @@ impl TestNode {
                     // Transport stats - use connection counts for now
                     transport_packets_sent: epidemic_stats.plumtree.messages_sent,
                     transport_packets_received: epidemic_stats.plumtree.messages_received,
-                    transport_bytes_sent: 0, // Not tracked in current implementation
-                    transport_bytes_received: 0, // Not tracked in current implementation
+                    transport_bytes_sent: bytes_sent.load(Ordering::Relaxed),
+                    transport_bytes_received: bytes_received.load(Ordering::Relaxed),
                 };
 
                 let probes =

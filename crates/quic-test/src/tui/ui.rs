@@ -170,7 +170,7 @@ fn draw_tab_bar(frame: &mut Frame, app: &App, area: Rect) {
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::Cyan))
-                .title(" ant-quic Network Test - [G]ossip [C]onnect [L]og or Tab/1-4 "),
+                .title(" Saorsa TestNet - [G]ossip [C]onnect [L]og or Tab/1-4 "),
         )
         .select(selected_idx)
         // Use Gray instead of White for better visibility on light backgrounds
