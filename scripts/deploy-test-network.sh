@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# deploy-test-network.sh - Deploy ant-quic test network from GitHub releases
+# deploy-test-network.sh - Deploy Saorsa test network from GitHub releases
 #
 # Usage:
 #   ./scripts/deploy-test-network.sh deploy    # Download + deploy all nodes
@@ -26,9 +26,10 @@ CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Configuration
-GITHUB_REPO="saorsa-labs/ant-quic"
-INSTALL_DIR="/opt/ant-quic-test"
-SERVICE_NAME="ant-quic-test"
+GITHUB_REPO="saorsa-labs/saorsa-testnet"
+INSTALL_DIR="/opt/saorsa-test"
+SERVICE_NAME="saorsa-quic-test"
+BINARY_NAME="saorsa-quic-test"
 REGISTRY_PORT="8080"
 
 # Node definitions (bash 3.x compatible)
@@ -136,18 +137,18 @@ remote_exec() {
 generate_registry_service_file() {
     cat << EOF
 [Unit]
-Description=ant-quic Test Network Registry Server
+Description=Saorsa Test Network Registry Server
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=root
-ExecStart=${INSTALL_DIR}/ant-quic-test --registry --port ${REGISTRY_PORT}
+ExecStart=${INSTALL_DIR}/saorsa-quic-test --registry --port ${REGISTRY_PORT}
 Restart=always
 RestartSec=5
-StandardOutput=append:/var/log/ant-quic-test.log
-StandardError=append:/var/log/ant-quic-test.log
+StandardOutput=append:/var/log/saorsa-quic-test.log
+StandardError=append:/var/log/saorsa-quic-test.log
 Environment=RUST_LOG=info
 
 [Install]
@@ -159,18 +160,18 @@ EOF
 generate_node_service_file() {
     cat << EOF
 [Unit]
-Description=ant-quic Test Network Node
+Description=Saorsa Test Network Node
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=root
-ExecStart=${INSTALL_DIR}/ant-quic-test --registry-url ${REGISTRY_URL} --bind-port 9000 --quiet
+ExecStart=${INSTALL_DIR}/saorsa-quic-test --registry-url ${REGISTRY_URL} --bind-port 9000 --quiet
 Restart=always
 RestartSec=5
-StandardOutput=append:/var/log/ant-quic-test.log
-StandardError=append:/var/log/ant-quic-test.log
+StandardOutput=append:/var/log/saorsa-quic-test.log
+StandardError=append:/var/log/saorsa-quic-test.log
 Environment=RUST_LOG=info
 
 [Install]
@@ -194,12 +195,12 @@ deploy_node() {
 
     # Download binary
     local release_url="https://github.com/${GITHUB_REPO}/releases/download/v${version}"
-    local archive="ant-quic-test-x86_64-linux.tar.gz"
+    local archive="saorsa-quic-test-x86_64-linux.tar.gz"
 
-    log_info "  Downloading ant-quic-test v${version}..."
+    log_info "  Downloading saorsa-quic-test v${version}..."
     remote_exec "$node" "cd ${INSTALL_DIR} && wget -q -O ${archive} ${release_url}/${archive}"
     remote_exec "$node" "cd ${INSTALL_DIR} && tar -xzf ${archive} && rm ${archive}"
-    remote_exec "$node" "chmod +x ${INSTALL_DIR}/ant-quic-test"
+    remote_exec "$node" "chmod +x ${INSTALL_DIR}/saorsa-quic-test"
 
     # Generate and install appropriate service file
     log_info "  Installing systemd service (${role})..."
@@ -255,7 +256,7 @@ cmd_deploy() {
     log_success "Deployment complete!"
     echo ""
     echo -e "${CYAN}╔═══════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║               ant-quic Test Network Deployed!                 ║${NC}"
+    echo -e "${CYAN}║               Saorsa Test Network Deployed!                 ║${NC}"
     echo -e "${CYAN}║                   \"We will be legion!!\"                       ║${NC}"
     echo -e "${CYAN}╚═══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
@@ -321,7 +322,7 @@ cmd_restart() {
 cmd_status() {
     echo ""
     echo -e "${CYAN}╔═══════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║           ant-quic Test Network Status                        ║${NC}"
+    echo -e "${CYAN}║           Saorsa Test Network Status                        ║${NC}"
     echo -e "${CYAN}║                 \"We will be legion!!\"                         ║${NC}"
     echo -e "${CYAN}╚═══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
@@ -393,7 +394,7 @@ cmd_logs() {
         local role
         role=$(get_node_role "$node")
         echo -e "\n${BLUE}=== Logs from ${node} (${role}) ===${NC}\n"
-        remote_exec "$node" "tail -50 /var/log/ant-quic-test.log 2>/dev/null || journalctl -u ${SERVICE_NAME} -n 50 --no-pager"
+        remote_exec "$node" "tail -50 /var/log/saorsa-quic-test.log 2>/dev/null || journalctl -u ${SERVICE_NAME} -n 50 --no-pager"
     done
 }
 
@@ -432,7 +433,7 @@ cmd_health() {
 show_usage() {
     cat << EOF
 ${CYAN}╔═══════════════════════════════════════════════════════════════╗
-║         ant-quic Test Network Deployment Tool                 ║
+║         Saorsa Test Network Deployment Tool                 ║
 ║                   "We will be legion!!"                       ║
 ╚═══════════════════════════════════════════════════════════════╝${NC}
 
