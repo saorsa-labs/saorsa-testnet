@@ -1,0 +1,235 @@
+# Release - Build and publish releases
+# Builds multi-platform binaries for saorsa-quic-test
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., v0.1.0)'
+        required: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  validate:
+    name: Validate Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      version_number: ${{ steps.version.outputs.version_number }}
+      is_prerelease: ${{ steps.version.outputs.is_prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          VERSION_NUMBER="${VERSION#v}"
+          echo "version_number=$VERSION_NUMBER" >> $GITHUB_OUTPUT
+
+          if [[ "$VERSION" =~ -(alpha|beta|rc) ]]; then
+            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+          fi
+          echo "Version: $VERSION"
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: validate
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x86_64
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            binary: saorsa-quic-test
+            archive: saorsa-quic-test-x86_64-linux.tar.gz
+
+          # Linux musl (static, Alpine-compatible)
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+            binary: saorsa-quic-test
+            archive: saorsa-quic-test-x86_64-linux-musl.tar.gz
+            use-cross: true
+
+          # Linux ARM64
+          - os: ubuntu-24.04
+            target: aarch64-unknown-linux-gnu
+            binary: saorsa-quic-test
+            archive: saorsa-quic-test-aarch64-linux.tar.gz
+            use-cross: true
+
+          # Linux ARMv7 (Raspberry Pi, etc.)
+          - os: ubuntu-24.04
+            target: armv7-unknown-linux-gnueabihf
+            binary: saorsa-quic-test
+            archive: saorsa-quic-test-armv7-linux.tar.gz
+            use-cross: true
+
+          # macOS Intel
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            binary: saorsa-quic-test
+            archive: saorsa-quic-test-x86_64-macos.tar.gz
+
+          # macOS Apple Silicon
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            binary: saorsa-quic-test
+            archive: saorsa-quic-test-aarch64-macos.tar.gz
+
+          # Windows MSVC
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            binary: saorsa-quic-test.exe
+            archive: saorsa-quic-test-x86_64-windows.zip
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Install NASM for Windows builds (required by aws-lc-rs)
+      - name: Install NASM
+        if: matrix.os == 'windows-latest'
+        uses: ilammy/setup-nasm@v1
+
+      # Use actions-rust-cross for cross-compilation
+      - name: Build (cross)
+        if: matrix.use-cross == true
+        uses: houseabsolute/actions-rust-cross@v1
+        with:
+          command: build
+          target: ${{ matrix.target }}
+          args: "--locked --release -p saorsa-quic-test"
+          strip: true
+
+      # Native builds for non-cross targets
+      - name: Install Rust (native)
+        if: matrix.use-cross != true
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo (native)
+        if: matrix.use-cross != true
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build (native)
+        if: matrix.use-cross != true
+        run: cargo build --release --target ${{ matrix.target }} -p saorsa-quic-test
+        shell: bash
+
+      - name: Strip binaries (Unix)
+        if: matrix.os != 'windows-latest' && matrix.use-cross != true
+        run: |
+          if command -v strip &> /dev/null; then
+            strip target/${{ matrix.target }}/release/${{ matrix.binary }} || true
+          fi
+
+      - name: Package (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar czf ../../../${{ matrix.archive }} ${{ matrix.binary }}
+          cd -
+          sha256sum ${{ matrix.archive }} > ${{ matrix.archive }}.sha256
+
+      - name: Package (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          cd target/${{ matrix.target }}/release
+          7z a ../../../${{ matrix.archive }} ${{ matrix.binary }}
+          cd -
+          certutil -hashfile ${{ matrix.archive }} SHA256 > ${{ matrix.archive }}.sha256
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.archive }}
+          path: |
+            ${{ matrix.archive }}
+            ${{ matrix.archive }}.sha256
+          retention-days: 1
+
+  release:
+    name: Create GitHub Release
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    if: always() && needs.validate.result == 'success'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.tar.gz.sha256" -o -name "*.zip" -o -name "*.zip.sha256" \) -exec mv {} release/ \;
+          echo "Release assets:"
+          ls -la release/
+          cd release
+          sha256sum *.tar.gz *.zip 2>/dev/null | sort > checksums.txt || true
+          cat checksums.txt
+          cd ..
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.validate.outputs.version }}
+          files: release/*
+          draft: false
+          prerelease: ${{ needs.validate.outputs.is_prerelease }}
+          generate_release_notes: true
+          body: |
+            ## Saorsa TestNet ${{ needs.validate.outputs.version }}
+
+            ### Installation
+
+            Download the appropriate binary for your platform below.
+
+            **Linux/macOS:**
+            ```bash
+            tar -xzf saorsa-quic-test-*.tar.gz
+            chmod +x saorsa-quic-test
+            ./saorsa-quic-test
+            ```
+
+            **Windows:**
+            ```powershell
+            Expand-Archive saorsa-quic-test-*.zip
+            .\saorsa-quic-test.exe
+            ```
+
+            ### Checksums
+
+            See checksums.txt for SHA256 checksums of all binaries.
