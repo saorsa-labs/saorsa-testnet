@@ -400,7 +400,8 @@ impl ProofOrchestrator {
     /// Create a new proof orchestrator with custom config.
     pub fn with_config(config: ProofOrchestratorConfig) -> Self {
         let gossip_verifier = GossipVerifier::with_config(config.gossip_config.clone());
-        let crdt_verifier = CrdtVerifier::with_config(CrdtType::PeerCache, config.crdt_config.clone());
+        let crdt_verifier =
+            CrdtVerifier::with_config(CrdtType::PeerCache, config.crdt_config.clone());
         let debugger = AutomatedDebugger::with_config(config.debug_config.clone());
 
         Self {
@@ -465,8 +466,7 @@ impl ProofOrchestrator {
 
     /// Record state hash from a node.
     pub fn record_state_hash(&mut self, node_id: &str, hash: [u8; 32]) {
-        self.crdt_verifier
-            .update_state(node_id.to_string(), hash);
+        self.crdt_verifier.update_state(node_id.to_string(), hash);
         if let Some(state) = self.node_states.get_mut(node_id) {
             state.state_hash = Some(hash);
             state.last_updated = SystemTime::now();
@@ -524,7 +524,7 @@ impl ProofOrchestrator {
 
         let mut summary = VerificationSummary::default();
 
-        for (_key, result) in &state.data_verifications {
+        for result in state.data_verifications.values() {
             summary.total_tests += 1;
 
             if result.is_success() {
@@ -599,9 +599,7 @@ impl ProofOrchestrator {
 
             connection_details.push(format!(
                 "{}:{}/{}v",
-                node_id,
-                peer_count,
-                summary.verified_count
+                node_id, peer_count, summary.verified_count
             ));
         }
 
@@ -660,8 +658,8 @@ impl ProofOrchestrator {
         let mut verified = 0;
         let mut total = 0;
 
-        for (_node_id, state) in &self.node_states {
-            for (_key, result) in &state.data_verifications {
+        for state in self.node_states.values() {
+            for result in state.data_verifications.values() {
                 if result.ip_version == version {
                     total += 1;
                     if result.is_success() {
@@ -672,7 +670,10 @@ impl ProofOrchestrator {
         }
 
         let label = format!("connectivity_{}", version);
-        let details = format!("{} verified out of {} {} connections", verified, total, version);
+        let details = format!(
+            "{} verified out of {} {} connections",
+            verified, total, version
+        );
 
         // Pass if any connections verified OR no connections attempted
         // (relay is always available as fallback)
@@ -690,8 +691,8 @@ impl ProofOrchestrator {
         let mut total_inbound = 0;
         let mut total_outbound = 0;
 
-        for (_node_id, state) in &self.node_states {
-            for (_key, result) in &state.data_verifications {
+        for state in self.node_states.values() {
+            for result in state.data_verifications.values() {
                 match result.direction {
                     ConnectionDirection::Inbound => {
                         total_inbound += 1;
@@ -727,7 +728,7 @@ impl ProofOrchestrator {
     pub fn get_aggregated_verification_summary(&self) -> VerificationSummary {
         let mut aggregate = VerificationSummary::default();
 
-        for (node_id, _state) in &self.node_states {
+        for node_id in self.node_states.keys() {
             let node_summary = self.get_verification_summary(node_id);
             aggregate.total_tests += node_summary.total_tests;
             aggregate.verified_count += node_summary.verified_count;
@@ -752,7 +753,10 @@ impl ProofOrchestrator {
         if !summary.hyparview_valid {
             anomalies.push(TestAnomaly::new(
                 "hyparview_failure".to_string(),
-                format!("HyParView verification failed: {}", summary.hyparview_details),
+                format!(
+                    "HyParView verification failed: {}",
+                    summary.hyparview_details
+                ),
                 4,
             ));
         }
@@ -773,7 +777,11 @@ impl ProofOrchestrator {
 
         let details = format!(
             "HyParView:{} SWIM:{} Plumtree:{}",
-            if summary.hyparview_valid { "OK" } else { "FAIL" },
+            if summary.hyparview_valid {
+                "OK"
+            } else {
+                "FAIL"
+            },
             if summary.swim_valid { "OK" } else { "FAIL" },
             if summary.plumtree_valid { "OK" } else { "FAIL" },
         );

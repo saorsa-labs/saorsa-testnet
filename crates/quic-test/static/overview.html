@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Overview - Saorsa Network Dashboard</title>
+  <link rel="stylesheet" href="/static/css/dashboard.css">
+</head>
+<body>
+  <div class="dashboard">
+    <header class="header">
+      <h1>Saorsa Network Dashboard</h1>
+      <nav class="header-nav">
+        <a href="/" >Globe</a>
+        <a href="/overview" class="active">Overview</a>
+        <a href="/gossip">Gossip</a>
+        <a href="/matrix">Matrix</a>
+        <a href="/log">Log</a>
+      </nav>
+      <div class="status-indicator">
+        <span class="status-dot"></span>
+        <span class="status-text">Connecting...</span>
+      </div>
+    </header>
+
+    <main class="main-content">
+      <!-- Proof Status Cards -->
+      <div class="grid-4 mb-3">
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Connectivity</span>
+            <span class="card-badge" id="connectivity-badge">-</span>
+          </div>
+          <div class="card-body">
+            <div class="stat-group">
+              <span class="stat-label">Reachable Nodes</span>
+              <span class="stat-value" id="connectivity-nodes">-/-</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Gossip</span>
+            <span class="card-badge" id="gossip-badge">-</span>
+          </div>
+          <div class="card-body">
+            <div class="stat-group">
+              <span class="stat-label">HyParView Active</span>
+              <span class="stat-value small" id="gossip-hyparview">-</span>
+            </div>
+            <div class="stat-group mt-2">
+              <span class="stat-label">SWIM Alive</span>
+              <span class="stat-value small" id="gossip-swim">-</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">CRDT</span>
+            <span class="card-badge" id="crdt-badge">-</span>
+          </div>
+          <div class="card-body">
+            <div class="stat-group">
+              <span class="stat-label">Converged Nodes</span>
+              <span class="stat-value small" id="crdt-nodes">-</span>
+            </div>
+            <div class="stat-group mt-2">
+              <span class="stat-label">State Hash</span>
+              <span class="stat-value small text-dim" id="crdt-hash">-</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">NAT Traversal</span>
+            <span class="card-badge" id="nat-badge">-</span>
+          </div>
+          <div class="card-body">
+            <div class="flex gap-3">
+              <div class="stat-group">
+                <span class="stat-label">Direct</span>
+                <span class="stat-value small text-success" id="nat-direct">-</span>
+              </div>
+              <div class="stat-group">
+                <span class="stat-label">Punched</span>
+                <span class="stat-value small text-info" id="nat-punched">-</span>
+              </div>
+              <div class="stat-group">
+                <span class="stat-label">Relayed</span>
+                <span class="stat-value small text-warning" id="nat-relayed">-</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Network Stats -->
+      <div class="grid-2 mb-3">
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Network Statistics</span>
+          </div>
+          <div class="card-body">
+            <div class="grid-3">
+              <div class="stat-group">
+                <span class="stat-label">Total Nodes</span>
+                <span class="stat-value" id="total-nodes">-</span>
+              </div>
+              <div class="stat-group">
+                <span class="stat-label">Connections</span>
+                <span class="stat-value" id="total-connections">-</span>
+              </div>
+              <div class="stat-group">
+                <span class="stat-label">Uptime</span>
+                <span class="stat-value" id="uptime">-</span>
+              </div>
+              <div class="stat-group">
+                <span class="stat-label">IPv4</span>
+                <span class="stat-value small" id="ipv4-connections">-</span>
+              </div>
+              <div class="stat-group">
+                <span class="stat-label">IPv6</span>
+                <span class="stat-value small" id="ipv6-connections">-</span>
+              </div>
+              <div class="stat-group">
+                <span class="stat-label">Bytes Transferred</span>
+                <span class="stat-value small" id="bytes-transferred">-</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Local Node</span>
+          </div>
+          <div class="card-body">
+            <div class="grid-2">
+              <div class="stat-group">
+                <span class="stat-label">Peer ID</span>
+                <span class="stat-value small" id="local-peer-id">-</span>
+              </div>
+              <div class="stat-group">
+                <span class="stat-label">NAT Type</span>
+                <span class="stat-value small" id="local-nat-type">-</span>
+              </div>
+              <div class="stat-group">
+                <span class="stat-label">External IPv4</span>
+                <span class="stat-value small" id="local-external-ipv4">-</span>
+              </div>
+              <div class="stat-group">
+                <span class="stat-label">External IPv6</span>
+                <span class="stat-value small" id="local-external-ipv6">-</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Connected Peers Table -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Connected Peers</span>
+          <span class="card-badge" id="peers-count">0</span>
+        </div>
+        <div class="card-body">
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Peer ID</th>
+                  <th>Location</th>
+                  <th>Method</th>
+                  <th>Direction</th>
+                  <th>RTT</th>
+                  <th>Quality</th>
+                  <th>Connected</th>
+                </tr>
+              </thead>
+              <tbody id="peers-table">
+                <tr>
+                  <td colspan="7" class="loading">
+                    <div class="spinner"></div>
+                    Loading...
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="/static/js/ws-manager.js"></script>
+  <script>
+    const wsManager = new WebSocketManager({
+      onStatusChange: (status) => {
+        DashboardUtils.updateStatusIndicator(status === 'connected');
+      }
+    });
+
+    const data = new DashboardData();
+
+    // Initial data load
+    async function loadData() {
+      try {
+        const overview = await data.getOverview();
+        updateOverview(overview);
+      } catch (error) {
+        console.error('Failed to load overview data:', error);
+      }
+    }
+
+    function updateOverview(overview) {
+      const { proof_status, network_stats, connected_peers, local_node, uptime_secs } = overview;
+
+      // Proof Status
+      updateProofCard('connectivity', proof_status.connectivity_pass,
+        `${proof_status.connectivity_reachable}/${proof_status.connectivity_total}`);
+      document.getElementById('connectivity-nodes').textContent =
+        `${proof_status.connectivity_reachable}/${proof_status.connectivity_total}`;
+
+      updateProofCard('gossip', proof_status.gossip_pass);
+      document.getElementById('gossip-hyparview').textContent = proof_status.hyparview_active;
+      document.getElementById('gossip-swim').textContent = proof_status.swim_alive;
+
+      updateProofCard('crdt', proof_status.crdt_pass);
+      document.getElementById('crdt-nodes').textContent = proof_status.crdt_nodes;
+      document.getElementById('crdt-hash').textContent = proof_status.crdt_hash_short || '-';
+
+      updateProofCard('nat', proof_status.nat_pass);
+      document.getElementById('nat-direct').textContent = proof_status.nat_direct;
+      document.getElementById('nat-punched').textContent = proof_status.nat_punched;
+      document.getElementById('nat-relayed').textContent = proof_status.nat_relayed;
+
+      // Network Stats
+      document.getElementById('total-nodes').textContent =
+        DashboardUtils.formatNumber(network_stats.total_registered_nodes);
+      document.getElementById('total-connections').textContent =
+        DashboardUtils.formatNumber(network_stats.connection_successes);
+      document.getElementById('uptime').textContent =
+        DashboardUtils.formatDuration(uptime_secs);
+      document.getElementById('ipv4-connections').textContent =
+        DashboardUtils.formatNumber(network_stats.ipv4_connections);
+      document.getElementById('ipv6-connections').textContent =
+        DashboardUtils.formatNumber(network_stats.ipv6_connections);
+      document.getElementById('bytes-transferred').textContent =
+        DashboardUtils.formatBytes(network_stats.bytes_sent + network_stats.bytes_received);
+
+      // Local Node
+      document.getElementById('local-peer-id').textContent =
+        DashboardUtils.shortPeerId(local_node.peer_id);
+      document.getElementById('local-nat-type').textContent = local_node.nat_type;
+      document.getElementById('local-external-ipv4').textContent = local_node.external_ipv4 || '-';
+      document.getElementById('local-external-ipv6').textContent = local_node.external_ipv6 || '-';
+
+      // Connected Peers
+      updatePeersTable(connected_peers);
+    }
+
+    function updateProofCard(prefix, pass, badge) {
+      const badgeEl = document.getElementById(`${prefix}-badge`);
+      if (badgeEl) {
+        badgeEl.textContent = pass ? 'PASS' : 'FAIL';
+        badgeEl.className = `card-badge ${pass ? 'success' : 'error'}`;
+      }
+    }
+
+    function updatePeersTable(peers) {
+      const tbody = document.getElementById('peers-table');
+      document.getElementById('peers-count').textContent = peers.length;
+
+      if (peers.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="7" class="empty-state">
+              <div class="empty-state-icon">&#x1F4E1;</div>
+              <p>No connected peers</p>
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      tbody.innerHTML = peers.map(peer => `
+        <tr>
+          <td><code>${peer.short_id}</code></td>
+          <td>${peer.location || '-'}</td>
+          <td>${DashboardUtils.statusBadge(
+            peer.method === 'direct' ? 'success' :
+            peer.method === 'hole_punched' ? 'info' : 'warning',
+            peer.method
+          )}</td>
+          <td>${peer.direction}</td>
+          <td>${peer.rtt_ms ? peer.rtt_ms + 'ms' : '-'}</td>
+          <td>${DashboardUtils.statusBadge(
+            peer.quality === 'excellent' || peer.quality === 'good' ? 'success' :
+            peer.quality === 'fair' ? 'warning' : 'error',
+            peer.quality
+          )}</td>
+          <td>${DashboardUtils.formatDuration(peer.connected_secs)}</td>
+        </tr>
+      `).join('');
+    }
+
+    // WebSocket updates
+    wsManager.on('stats_update', (msg) => {
+      loadData(); // Refresh all data on stats update
+    });
+
+    wsManager.on('node_registered', (msg) => {
+      loadData();
+    });
+
+    wsManager.on('node_offline', (msg) => {
+      loadData();
+    });
+
+    // Start
+    wsManager.connect();
+    loadData();
+
+    // Refresh every 10 seconds
+    setInterval(loadData, 10000);
+  </script>
+</body>
+</html>

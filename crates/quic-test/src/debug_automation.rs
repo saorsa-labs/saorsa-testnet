@@ -362,10 +362,7 @@ impl Anomaly {
         };
         TestAnomaly {
             anomaly_type: self.pattern_name.clone(),
-            description: format!(
-                "[{}] {}: {}",
-                self.severity, self.node_id, self.message
-            ),
+            description: format!("[{}] {}: {}", self.severity, self.node_id, self.message),
             severity: severity_num,
             nodes_involved: vec![self.node_id.clone()],
             detected_at: self.timestamp,
@@ -634,9 +631,7 @@ impl AutomatedDebugger {
         }
 
         // Most frequent pattern is likely root cause
-        let (primary_pattern, count) = pattern_counts
-            .iter()
-            .max_by_key(|(_, c)| *c)?;
+        let (primary_pattern, count) = pattern_counts.iter().max_by_key(|(_, c)| *c)?;
 
         let primary_anomaly = anomalies
             .iter()
@@ -721,7 +716,8 @@ impl AutomatedDebugger {
         // Calculate stats
         let mut stats = DebugStats {
             log_lines_analyzed: self.logs.len(),
-            nodes_examined: self.logs
+            nodes_examined: self
+                .logs
                 .iter()
                 .map(|l| l.node_id.as_str())
                 .collect::<std::collections::HashSet<_>>()
@@ -740,8 +736,18 @@ impl AutomatedDebugger {
 
         // Calculate time span
         if !self.logs.is_empty() {
-            let min_ts = self.logs.iter().map(|l| l.timestamp_ms()).min().unwrap_or(0);
-            let max_ts = self.logs.iter().map(|l| l.timestamp_ms()).max().unwrap_or(0);
+            let min_ts = self
+                .logs
+                .iter()
+                .map(|l| l.timestamp_ms())
+                .min()
+                .unwrap_or(0);
+            let max_ts = self
+                .logs
+                .iter()
+                .map(|l| l.timestamp_ms())
+                .max()
+                .unwrap_or(0);
             stats.time_span_ms = max_ts.saturating_sub(min_ts);
         }
 
@@ -780,8 +786,18 @@ impl std::fmt::Display for DebugReport {
         writeln!(f)?;
 
         writeln!(f, "Anomalies by Severity:")?;
-        for severity in &[Severity::Critical, Severity::Error, Severity::Warning, Severity::Info] {
-            let count = self.stats.anomalies_by_severity.get(severity).copied().unwrap_or(0);
+        for severity in &[
+            Severity::Critical,
+            Severity::Error,
+            Severity::Warning,
+            Severity::Info,
+        ] {
+            let count = self
+                .stats
+                .anomalies_by_severity
+                .get(severity)
+                .copied()
+                .unwrap_or(0);
             if count > 0 {
                 writeln!(f, "  {}: {}", severity, count)?;
             }
@@ -789,7 +805,11 @@ impl std::fmt::Display for DebugReport {
         writeln!(f)?;
 
         if let Some(ref root_cause) = self.root_cause {
-            writeln!(f, "Root Cause (confidence: {:.0}%):", root_cause.confidence * 100.0)?;
+            writeln!(
+                f,
+                "Root Cause (confidence: {:.0}%):",
+                root_cause.confidence * 100.0
+            )?;
             writeln!(f, "  {}", root_cause.primary_cause)?;
             writeln!(f)?;
             writeln!(f, "Evidence:")?;
@@ -802,7 +822,11 @@ impl std::fmt::Display for DebugReport {
         if !self.suggested_fixes.is_empty() {
             writeln!(f, "Suggested Fixes (by priority):")?;
             for fix in &self.suggested_fixes {
-                writeln!(f, "  [{}] {}: {}", fix.priority, fix.component, fix.description)?;
+                writeln!(
+                    f,
+                    "  [{}] {}: {}",
+                    fix.priority, fix.component, fix.description
+                )?;
             }
         }
 

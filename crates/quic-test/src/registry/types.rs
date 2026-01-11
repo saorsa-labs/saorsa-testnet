@@ -1118,11 +1118,7 @@ impl NetworkConnectivityProof {
         Self {
             observer_id: observer_id.clone(),
             timestamp: SystemTime::now(),
-            attestation: SignedAttestation::new(
-                observer_id,
-                ProofType::Connectivity,
-                [0u8; 32],
-            ),
+            attestation: SignedAttestation::new(observer_id, ProofType::Connectivity, [0u8; 32]),
             ..Default::default()
         }
     }
@@ -1146,8 +1142,7 @@ impl NetworkConnectivityProof {
 
     /// Check if all cross-validations passed.
     pub fn all_cross_validated(&self) -> bool {
-        !self.cross_validations.is_empty()
-            && self.cross_validations.iter().all(|cv| cv.confirms_us)
+        !self.cross_validations.is_empty() && self.cross_validations.iter().all(|cv| cv.confirms_us)
     }
 
     /// Get failed cross-validations (peers who don't see us).
@@ -1163,7 +1158,11 @@ impl NetworkConnectivityProof {
         if self.cross_validations.is_empty() {
             return 0.0;
         }
-        let confirmed = self.cross_validations.iter().filter(|cv| cv.confirms_us).count();
+        let confirmed = self
+            .cross_validations
+            .iter()
+            .filter(|cv| cv.confirms_us)
+            .count();
         confirmed as f64 / self.cross_validations.len() as f64
     }
 
@@ -1378,11 +1377,7 @@ impl GossipProtocolProof {
     /// Create a new gossip protocol proof.
     pub fn new(node_id: String) -> Self {
         Self {
-            attestation: SignedAttestation::new(
-                node_id,
-                ProofType::GossipProtocol,
-                [0u8; 32],
-            ),
+            attestation: SignedAttestation::new(node_id, ProofType::GossipProtocol, [0u8; 32]),
             timestamp: SystemTime::now(),
             ..Default::default()
         }
@@ -1694,11 +1689,7 @@ impl ProofBasedTestReport {
             .as_ref()
             .map(|p| p.all_protocols_valid())
             .unwrap_or(false);
-        let crdt_ok = self
-            .crdt
-            .as_ref()
-            .map(|p| p.is_valid())
-            .unwrap_or(false);
+        let crdt_ok = self.crdt.as_ref().map(|p| p.is_valid()).unwrap_or(false);
 
         connectivity_ok && gossip_ok && crdt_ok
     }

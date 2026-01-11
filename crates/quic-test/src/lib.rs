@@ -1,9 +1,12 @@
+#![recursion_limit = "512"]
+
 //! ant-quic Test Network Infrastructure
 //!
 //! This crate provides the large-scale network testing infrastructure for ant-quic,
 //! including:
 //!
-//! - **Registry Server**: Central peer discovery and network statistics
+//! - **Gossip-First Peer Discovery**: Epidemic gossip distributes peer information
+//! - **Bootstrap Peers**: Hardcoded VPS nodes ensure network connectivity
 //! - **Terminal UI**: Interactive display of network status and connections
 //! - **Test Protocol**: 5KB packet exchange for connectivity verification
 //!
@@ -15,48 +18,50 @@
 //! # Architecture
 //!
 //! ```text
-//!                      ┌─────────────────────────┐
-//!                      │    Registry Server      │
-//!                      │    (saorsa-1)           │
-//!                      │                         │
-//!                      │  POST /api/register     │
-//!                      │  POST /api/heartbeat    │
-//!                      │  GET  /api/peers        │
-//!                      │  GET  /api/stats        │
-//!                      │  WS   /ws/live          │
-//!                      └───────────┬─────────────┘
-//!                                  │
-//!        ┌─────────────────────────┼─────────────────────────┐
-//!        │                         │                         │
-//!        ▼                         ▼                         ▼
-//!   ┌─────────┐             ┌─────────┐             ┌─────────┐
-//!   │ Node A  │◄───────────►│ Node B  │◄───────────►│ Node C  │
-//!   │  (TUI)  │   Direct/   │  (TUI)  │   Hole-     │  (TUI)  │
-//!   │         │   Punched   │         │   Punched   │         │
-//!   └─────────┘             └─────────┘             └─────────┘
+//! ┌─────────────────────────────────────────────────────────────────────────┐
+//! │                     Gossip-First Peer Discovery                          │
+//! ├─────────────────────────────────────────────────────────────────────────┤
+//! │                                                                          │
+//! │   ┌─────────────────────────────────────────────────────────────────┐   │
+//! │   │                 Bootstrap Peers (VPS Nodes)                      │   │
+//! │   │   saorsa-1 (relay)  saorsa-2  saorsa-3  ...  saorsa-9           │   │
+//! │   └──────────────────────────────┬──────────────────────────────────┘   │
+//! │                                  │                                       │
+//! │                      Epidemic Gossip (saorsa-gossip)                     │
+//! │                                  │                                       │
+//! │   ┌──────────────────────────────┼──────────────────────────────────┐   │
+//! │   │                              │                                   │   │
+//! │   ▼                              ▼                                   ▼   │
+//! │   ┌─────────┐             ┌─────────┐                         ┌─────────┐│
+//! │   │ Node A  │◄───────────►│ Node B  │◄───────────────────────►│ Node C  ││
+//! │   │  (TUI)  │   Direct/   │  (TUI)  │   Gossip distributes    │  (TUI)  ││
+//! │   │         │   Punched   │         │   peer cache            │         ││
+//! │   └─────────┘             └─────────┘                         └─────────┘│
+//! └─────────────────────────────────────────────────────────────────────────┘
 //! ```
 //!
 //! # Usage
 //!
-//! ## As Registry Server (on saorsa-1)
-//!
-//! ```bash
-//! ant-quic-test --registry --port 8080
-//! ```
-//!
-//! ## As Test Node (on user machines)
+//! ## As Test Node (default - gossip-first discovery)
 //!
 //! ```bash
 //! ant-quic-test
 //! ```
 //!
 //! The node will:
-//! 1. Register with the central registry
-//! 2. Receive a list of other peers
-//! 3. Automatically connect to random peers
+//! 1. Connect to hardcoded VPS bootstrap peers
+//! 2. Sync peer cache via epidemic gossip
+//! 3. Discover and connect to other peers
 //! 4. Exchange 5KB test packets
 //! 5. Display real-time statistics in TUI
+//!
+//! ## As Relay/Coordinator (on saorsa-1)
+//!
+//! ```bash
+//! ant-quic-test --relay
+//! ```
 
+pub mod bootstrap_peers;
 pub mod crdt_verification;
 pub mod dashboard;
 pub mod debug_automation;
@@ -76,13 +81,34 @@ pub mod tui;
 
 // Re-export key types for convenience
 pub use registry::{
-    ConnectionMethod, NatType, NetworkEvent, NetworkStats, NodeCapabilities, NodeHeartbeat,
-    NodeRegistration, PeerInfo, PeerStore, RegistrationResponse, RegistryClient, RegistryConfig,
-    start_registry_server,
+    ConnectionMethod,
     // Proof-based testing types
-    CrdtConvergenceProof, CrdtOperation, CrdtType, CrossValidation, GossipProtocolProof,
-    HyParViewProof, NetworkConnectivityProof, PlumtreeProof, ProofBasedTestReport, ProofType,
-    ProofValidationResult, SignedAttestation, SwimProof, TestAnomaly,
+    CrdtConvergenceProof,
+    CrdtOperation,
+    CrdtType,
+    CrossValidation,
+    GossipProtocolProof,
+    HyParViewProof,
+    NatType,
+    NetworkConnectivityProof,
+    NetworkEvent,
+    NetworkStats,
+    NodeCapabilities,
+    NodeHeartbeat,
+    NodeRegistration,
+    PeerInfo,
+    PeerStore,
+    PlumtreeProof,
+    ProofBasedTestReport,
+    ProofType,
+    ProofValidationResult,
+    RegistrationResponse,
+    RegistryClient,
+    RegistryConfig,
+    SignedAttestation,
+    SwimProof,
+    TestAnomaly,
+    start_registry_server,
 };
 
 pub use tui::{
@@ -99,7 +125,12 @@ pub use gossip::{
     TOPIC_PEER_RESPONSE, TOPIC_PEERS, TOPIC_RELAYS,
 };
 
-pub use dashboard::dashboard_routes;
+pub use dashboard::{
+    ConnectedPeerApi, ConnectionEntryApi, ConnectionsResponse, DirectionalStatsApi, FramesQuery,
+    FramesResponse, GossipMessageStatsApi, GossipResponse, HyParViewStatusApi, LocalNodeApi,
+    NetworkStatsApi, OverviewResponse, PlumtreeStatusApi, ProofStatusApi, ProtocolFrameApi,
+    SwimStatusApi, dashboard_routes,
+};
 
 pub use orchestrator::{
     OrchestratorConfig, OrchestratorStatus, PeerTestResult, TestCommand, TestOrchestrator,
@@ -130,17 +161,17 @@ pub use harness::{
 pub use gossip_verification::{GossipVerifier, GossipVerifierConfig, VerificationSummary};
 
 pub use crdt_verification::{
-    CrdtVerifier, CrdtVerifierConfig, ConflictResolutionResult, ConvergenceState,
-    OperationTracker, compute_state_hash,
+    ConflictResolutionResult, ConvergenceState, CrdtVerifier, CrdtVerifierConfig, OperationTracker,
+    compute_state_hash,
 };
 
 pub use debug_automation::{
-    AutomatedDebugger, DebuggerConfig, DebugReport, Anomaly, Severity,
-    ErrorPattern, LogEntry, RootCause, SuggestedFix, Timeline,
+    Anomaly, AutomatedDebugger, DebugReport, DebuggerConfig, ErrorPattern, LogEntry, RootCause,
+    Severity, SuggestedFix, Timeline,
 };
 
 pub use proof_orchestrator::{
-    ProofOrchestrator, ProofOrchestratorConfig, OrchestratorReport, StepResult,
+    OrchestratorReport, ProofOrchestrator, ProofOrchestratorConfig, StepResult,
 };
 
 pub use lib_verification::{

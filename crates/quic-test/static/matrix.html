@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Connectivity Matrix - Saorsa Network Dashboard</title>
+  <link rel="stylesheet" href="/static/css/dashboard.css">
+  <style>
+    .matrix-wrapper {
+      overflow-x: auto;
+    }
+
+    .matrix-table {
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+
+    .matrix-table th,
+    .matrix-table td {
+      padding: 6px 8px;
+      text-align: center;
+      white-space: nowrap;
+    }
+
+    .matrix-table th {
+      position: sticky;
+      top: 0;
+      background-color: var(--bg-secondary);
+      z-index: 10;
+    }
+
+    .matrix-table th:first-child {
+      position: sticky;
+      left: 0;
+      z-index: 20;
+    }
+
+    .matrix-table td:first-child {
+      position: sticky;
+      left: 0;
+      background-color: var(--bg-secondary);
+      font-weight: 600;
+    }
+
+    .peer-id {
+      font-family: monospace;
+      font-size: 11px;
+    }
+
+    .nat-badge {
+      font-size: 10px;
+      padding: 1px 4px;
+      border-radius: 3px;
+      margin-left: 4px;
+    }
+
+    .nat-badge.none { background-color: rgba(34, 197, 94, 0.2); color: var(--success); }
+    .nat-badge.full_cone { background-color: rgba(59, 130, 246, 0.2); color: var(--info); }
+    .nat-badge.address_restricted { background-color: rgba(234, 179, 8, 0.2); color: var(--warning); }
+    .nat-badge.port_restricted { background-color: rgba(249, 115, 22, 0.2); color: #f97316; }
+    .nat-badge.symmetric { background-color: rgba(239, 68, 68, 0.2); color: var(--error); }
+
+    .connection-detail {
+      background-color: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 16px;
+      margin-top: 16px;
+    }
+
+    .detail-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .detail-peer {
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 16px;
+    }
+
+    .detail-section h4 {
+      font-size: 12px;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    .stats-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 4px 0;
+    }
+
+    .stats-label {
+      color: var(--text-secondary);
+    }
+
+    .directional-detail {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .method-stat {
+      text-align: center;
+      padding: 8px;
+      background-color: var(--bg-tertiary);
+      border-radius: 4px;
+    }
+
+    .method-stat .label {
+      font-size: 10px;
+      color: var(--text-dim);
+      display: block;
+    }
+
+    .method-stat .value {
+      font-size: 14px;
+      margin-top: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div class="dashboard">
+    <header class="header">
+      <h1>Saorsa Network Dashboard</h1>
+      <nav class="header-nav">
+        <a href="/">Globe</a>
+        <a href="/overview">Overview</a>
+        <a href="/gossip">Gossip</a>
+        <a href="/matrix" class="active">Matrix</a>
+        <a href="/log">Log</a>
+      </nav>
+      <div class="status-indicator">
+        <span class="status-dot"></span>
+        <span class="status-text">Connecting...</span>
+      </div>
+    </header>
+
+    <main class="main-content">
+      <!-- Summary Stats -->
+      <div class="grid-4 mb-3">
+        <div class="card">
+          <div class="card-body">
+            <div class="stat-group">
+              <span class="stat-label">Total Peers</span>
+              <span class="stat-value" id="total-peers">-</span>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-body">
+            <div class="stat-group">
+              <span class="stat-label">Connected</span>
+              <span class="stat-value text-success" id="connected-count">-</span>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-body">
+            <div class="stat-group">
+              <span class="stat-label">Disconnected</span>
+              <span class="stat-value text-error" id="disconnected-count">-</span>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-body">
+            <div class="stat-group">
+              <span class="stat-label">Full Mesh</span>
+              <span class="stat-value" id="mesh-percent">-%</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Connection Table -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Connection History</span>
+          <span class="card-badge" id="entries-count">0 entries</span>
+        </div>
+        <div class="card-body">
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Peer ID</th>
+                  <th>Location</th>
+                  <th>NAT Type</th>
+                  <th>Status</th>
+                  <th>Outbound</th>
+                  <th>Inbound</th>
+                  <th>Best RTT</th>
+                  <th>Packets</th>
+                  <th>Last Seen</th>
+                </tr>
+              </thead>
+              <tbody id="connections-table">
+                <tr>
+                  <td colspan="9" class="loading">
+                    <div class="spinner"></div>
+                    Loading...
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Selected Connection Detail -->
+      <div class="connection-detail" id="connection-detail" style="display: none;">
+        <div class="detail-header">
+          <span class="detail-peer" id="detail-peer-id">-</span>
+          <span class="badge" id="detail-status">-</span>
+        </div>
+        <div class="detail-grid">
+          <div class="detail-section">
+            <h4>Outbound (Us -> Them)</h4>
+            <div class="directional-detail" id="detail-outbound">
+              <!-- Filled by JS -->
+            </div>
+          </div>
+          <div class="detail-section">
+            <h4>Inbound (Them -> Us)</h4>
+            <div class="directional-detail" id="detail-inbound">
+              <!-- Filled by JS -->
+            </div>
+          </div>
+        </div>
+        <div class="detail-grid mt-3">
+          <div class="detail-section">
+            <h4>Connection Stats</h4>
+            <div class="stats-row">
+              <span class="stats-label">Total Packets</span>
+              <span id="detail-packets">-</span>
+            </div>
+            <div class="stats-row">
+              <span class="stats-label">Connection Count</span>
+              <span id="detail-connection-count">-</span>
+            </div>
+            <div class="stats-row">
+              <span class="stats-label">Best RTT</span>
+              <span id="detail-best-rtt">-</span>
+            </div>
+          </div>
+          <div class="detail-section">
+            <h4>Timeline</h4>
+            <div class="stats-row">
+              <span class="stats-label">First Connected</span>
+              <span id="detail-first-connected">-</span>
+            </div>
+            <div class="stats-row">
+              <span class="stats-label">Last Seen</span>
+              <span id="detail-last-seen">-</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="/static/js/ws-manager.js"></script>
+  <script>
+    const wsManager = new WebSocketManager({
+      onStatusChange: (status) => {
+        DashboardUtils.updateStatusIndicator(status === 'connected');
+      }
+    });
+
+    const data = new DashboardData();
+    let connections = [];
+
+    async function loadData() {
+      try {
+        const result = await data.getConnections();
+        connections = result.connections;
+        updateConnectionsTable(result);
+      } catch (error) {
+        console.error('Failed to load connections data:', error);
+      }
+    }
+
+    function updateConnectionsTable(result) {
+      const { connections, total_peers, connected_count } = result;
+
+      // Update summary stats
+      document.getElementById('total-peers').textContent = total_peers;
+      document.getElementById('connected-count').textContent = connected_count;
+      document.getElementById('disconnected-count').textContent = total_peers - connected_count;
+      document.getElementById('entries-count').textContent = `${connections.length} entries`;
+
+      const meshPercent = total_peers > 0
+        ? ((connected_count / total_peers) * 100).toFixed(0)
+        : 0;
+      document.getElementById('mesh-percent').textContent = `${meshPercent}%`;
+
+      // Update table
+      const tbody = document.getElementById('connections-table');
+
+      if (connections.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="9" class="empty-state">
+              <div class="empty-state-icon">&#x1F517;</div>
+              <p>No connection history</p>
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      tbody.innerHTML = connections.map(conn => `
+        <tr onclick="showConnectionDetail('${conn.full_id}')" style="cursor: pointer;">
+          <td><code class="peer-id">${conn.short_id}</code></td>
+          <td>${conn.location || '-'}</td>
+          <td>${getNatBadge(conn.nat_type)}</td>
+          <td>${getStatusBadge(conn.status)}</td>
+          <td>${DashboardUtils.renderDirectionalStats(conn.outbound)}</td>
+          <td>${DashboardUtils.renderDirectionalStats(conn.inbound)}</td>
+          <td>${conn.best_rtt_ms ? conn.best_rtt_ms + 'ms' : '-'}</td>
+          <td>${DashboardUtils.formatNumber(conn.total_packets)}</td>
+          <td>${DashboardUtils.formatDuration(conn.last_seen_secs)}</td>
+        </tr>
+      `).join('');
+    }
+
+    function getNatBadge(natType) {
+      const labels = {
+        'none': 'None',
+        'full_cone': 'Full',
+        'address_restricted': 'Addr',
+        'port_restricted': 'Port',
+        'symmetric': 'Sym',
+        'unknown': '?'
+      };
+      return `<span class="nat-badge ${natType}">${labels[natType] || natType}</span>`;
+    }
+
+    function getStatusBadge(status) {
+      const classMap = {
+        'connected': 'badge-success',
+        'disconnected': 'badge-error',
+        'never_connected': 'badge-warning'
+      };
+      return `<span class="badge ${classMap[status] || ''}">${status}</span>`;
+    }
+
+    function showConnectionDetail(fullId) {
+      const conn = connections.find(c => c.full_id === fullId);
+      if (!conn) return;
+
+      document.getElementById('connection-detail').style.display = 'block';
+      document.getElementById('detail-peer-id').textContent = conn.full_id;
+      document.getElementById('detail-status').textContent = conn.status;
+      document.getElementById('detail-status').className =
+        'badge ' + (conn.status === 'connected' ? 'badge-success' : 'badge-error');
+
+      // Outbound stats
+      document.getElementById('detail-outbound').innerHTML = renderDirectionalDetail(conn.outbound);
+      document.getElementById('detail-inbound').innerHTML = renderDirectionalDetail(conn.inbound);
+
+      // Connection stats
+      document.getElementById('detail-packets').textContent =
+        DashboardUtils.formatNumber(conn.total_packets);
+      document.getElementById('detail-connection-count').textContent = conn.connection_count;
+      document.getElementById('detail-best-rtt').textContent =
+        conn.best_rtt_ms ? conn.best_rtt_ms + 'ms' : '-';
+
+      // Timeline
+      document.getElementById('detail-first-connected').textContent =
+        DashboardUtils.formatDuration(conn.first_connected_secs) + ' ago';
+      document.getElementById('detail-last-seen').textContent =
+        DashboardUtils.formatDuration(conn.last_seen_secs) + ' ago';
+
+      // Scroll to detail
+      document.getElementById('connection-detail').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function renderDirectionalDetail(stats) {
+      if (!stats) return '<span class="text-dim">No data</span>';
+
+      const methods = [
+        { label: 'Direct v4', key: 'direct_ipv4' },
+        { label: 'Direct v6', key: 'direct_ipv6' },
+        { label: 'NAT v4', key: 'nat_ipv4' },
+        { label: 'NAT v6', key: 'nat_ipv6' },
+        { label: 'Relay v4', key: 'relay_ipv4' },
+        { label: 'Relay v6', key: 'relay_ipv6' },
+      ];
+
+      return methods.map(m => {
+        const value = stats[m.key];
+        const color = value === 'success' ? 'text-success' :
+                      value === 'failed' ? 'text-error' : 'text-dim';
+        const symbol = value === 'success' ? '&#x2713;' :
+                       value === 'failed' ? '&#x2717;' : '&#xb7;';
+        return `
+          <div class="method-stat">
+            <span class="label">${m.label}</span>
+            <span class="value ${color}">${symbol}</span>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // WebSocket updates
+    wsManager.on('connection_established', () => loadData());
+    wsManager.on('stats_update', () => loadData());
+
+    // Start
+    wsManager.connect();
+    loadData();
+
+    // Refresh every 10 seconds
+    setInterval(loadData, 10000);
+  </script>
+</body>
+</html>

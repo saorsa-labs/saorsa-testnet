@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Protocol Log - Saorsa Network Dashboard</title>
+  <link rel="stylesheet" href="/static/css/dashboard.css">
+  <style>
+    .log-controls {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+
+    .log-filter {
+      display: flex;
+      gap: 8px;
+    }
+
+    .filter-btn {
+      padding: 6px 12px;
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+      background-color: var(--bg-tertiary);
+      color: var(--text-secondary);
+      cursor: pointer;
+      font-size: 12px;
+      transition: all 0.15s ease;
+    }
+
+    .filter-btn:hover {
+      background-color: var(--bg-secondary);
+      color: var(--text-primary);
+    }
+
+    .filter-btn.active {
+      background-color: var(--accent-blue);
+      border-color: var(--accent-blue);
+      color: var(--bg-primary);
+    }
+
+    .auto-scroll-toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-left: auto;
+    }
+
+    .toggle-switch {
+      position: relative;
+      width: 40px;
+      height: 20px;
+    }
+
+    .toggle-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .toggle-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: var(--bg-tertiary);
+      border-radius: 20px;
+      transition: 0.2s;
+    }
+
+    .toggle-slider:before {
+      position: absolute;
+      content: "";
+      height: 14px;
+      width: 14px;
+      left: 3px;
+      bottom: 3px;
+      background-color: var(--text-dim);
+      border-radius: 50%;
+      transition: 0.2s;
+    }
+
+    input:checked + .toggle-slider {
+      background-color: var(--accent-blue);
+    }
+
+    input:checked + .toggle-slider:before {
+      transform: translateX(20px);
+      background-color: white;
+    }
+
+    .log-viewer {
+      background-color: var(--bg-primary);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      height: calc(100vh - 280px);
+      overflow-y: auto;
+      font-family: 'SF Mono', 'Menlo', 'Monaco', monospace;
+      font-size: 12px;
+    }
+
+    .log-line {
+      display: flex;
+      padding: 4px 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+      transition: background-color 0.15s ease;
+    }
+
+    .log-line:hover {
+      background-color: rgba(255, 255, 255, 0.02);
+    }
+
+    .log-line.new {
+      animation: highlight 1s ease-out;
+    }
+
+    @keyframes highlight {
+      0% { background-color: rgba(96, 165, 250, 0.2); }
+      100% { background-color: transparent; }
+    }
+
+    .log-time {
+      color: var(--text-dim);
+      width: 90px;
+      flex-shrink: 0;
+    }
+
+    .log-peer {
+      color: var(--accent-cyan);
+      width: 90px;
+      flex-shrink: 0;
+      font-family: monospace;
+    }
+
+    .log-arrow {
+      width: 30px;
+      flex-shrink: 0;
+      text-align: center;
+    }
+
+    .log-arrow.sent { color: var(--accent-green); }
+    .log-arrow.received { color: var(--accent-yellow); }
+
+    .log-frame-type {
+      color: var(--accent-purple);
+      width: 160px;
+      flex-shrink: 0;
+    }
+
+    .log-context {
+      color: var(--text-secondary);
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .frame-stats {
+      display: flex;
+      gap: 16px;
+      padding: 12px;
+      background-color: var(--bg-secondary);
+      border-radius: 8px;
+      margin-bottom: 16px;
+    }
+
+    .frame-stat {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .frame-stat-label {
+      color: var(--text-secondary);
+      font-size: 12px;
+    }
+
+    .frame-stat-value {
+      font-weight: 600;
+    }
+
+    .empty-log {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: var(--text-secondary);
+    }
+
+    .empty-log-icon {
+      font-size: 48px;
+      margin-bottom: 16px;
+      opacity: 0.3;
+    }
+  </style>
+</head>
+<body>
+  <div class="dashboard">
+    <header class="header">
+      <h1>Saorsa Network Dashboard</h1>
+      <nav class="header-nav">
+        <a href="/">Globe</a>
+        <a href="/overview">Overview</a>
+        <a href="/gossip">Gossip</a>
+        <a href="/matrix">Matrix</a>
+        <a href="/log" class="active">Log</a>
+      </nav>
+      <div class="status-indicator">
+        <span class="status-dot"></span>
+        <span class="status-text">Connecting...</span>
+      </div>
+    </header>
+
+    <main class="main-content">
+      <!-- Frame Stats -->
+      <div class="frame-stats">
+        <div class="frame-stat">
+          <span class="frame-stat-label">Total Frames:</span>
+          <span class="frame-stat-value" id="total-frames">0</span>
+        </div>
+        <div class="frame-stat">
+          <span class="frame-stat-label">Sent:</span>
+          <span class="frame-stat-value text-success" id="sent-frames">0</span>
+        </div>
+        <div class="frame-stat">
+          <span class="frame-stat-label">Received:</span>
+          <span class="frame-stat-value text-warning" id="received-frames">0</span>
+        </div>
+        <div class="frame-stat">
+          <span class="frame-stat-label">Displaying:</span>
+          <span class="frame-stat-value" id="displayed-frames">0</span>
+        </div>
+      </div>
+
+      <!-- Controls -->
+      <div class="log-controls">
+        <div class="log-filter">
+          <button class="filter-btn active" data-filter="all">All</button>
+          <button class="filter-btn" data-filter="sent">Sent</button>
+          <button class="filter-btn" data-filter="received">Received</button>
+        </div>
+
+        <input type="text" id="frame-search" placeholder="Filter by frame type or peer..."
+          style="padding: 6px 12px; border: 1px solid var(--border-color); border-radius: 4px;
+                 background-color: var(--bg-tertiary); color: var(--text-primary);
+                 font-size: 12px; width: 250px;">
+
+        <div class="auto-scroll-toggle">
+          <span class="text-secondary">Auto-scroll</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="auto-scroll" checked>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <button onclick="clearLog()" style="padding: 6px 12px; border: 1px solid var(--border-color);
+                border-radius: 4px; background-color: var(--bg-tertiary); color: var(--text-secondary);
+                cursor: pointer; font-size: 12px;">Clear</button>
+      </div>
+
+      <!-- Log Viewer -->
+      <div class="log-viewer" id="log-viewer">
+        <div class="empty-log" id="empty-log">
+          <div class="empty-log-icon">&#x1F4DC;</div>
+          <p>No protocol frames recorded</p>
+          <p class="text-dim mt-1">Frames will appear here as they are sent and received</p>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="/static/js/ws-manager.js"></script>
+  <script>
+    const wsManager = new WebSocketManager({
+      onStatusChange: (status) => {
+        DashboardUtils.updateStatusIndicator(status === 'connected');
+      }
+    });
+
+    const data = new DashboardData();
+    let frames = [];
+    let currentFilter = 'all';
+    let searchQuery = '';
+
+    async function loadData() {
+      try {
+        const result = await data.getFrames(500);
+        frames = result.frames;
+        updateStats(result);
+        renderLog();
+      } catch (error) {
+        console.error('Failed to load frames data:', error);
+      }
+    }
+
+    function updateStats(result) {
+      document.getElementById('total-frames').textContent =
+        DashboardUtils.formatNumber(result.total_recorded);
+
+      const sent = frames.filter(f => f.direction === 'sent').length;
+      const received = frames.filter(f => f.direction === 'received').length;
+
+      document.getElementById('sent-frames').textContent = sent;
+      document.getElementById('received-frames').textContent = received;
+    }
+
+    function renderLog() {
+      const viewer = document.getElementById('log-viewer');
+      const emptyLog = document.getElementById('empty-log');
+
+      // Filter frames
+      let filteredFrames = frames;
+
+      if (currentFilter !== 'all') {
+        filteredFrames = filteredFrames.filter(f => f.direction === currentFilter);
+      }
+
+      if (searchQuery) {
+        const query = searchQuery.toLowerCase();
+        filteredFrames = filteredFrames.filter(f =>
+          f.frame_type.toLowerCase().includes(query) ||
+          f.peer_id.toLowerCase().includes(query) ||
+          (f.context && f.context.toLowerCase().includes(query))
+        );
+      }
+
+      document.getElementById('displayed-frames').textContent = filteredFrames.length;
+
+      if (filteredFrames.length === 0) {
+        emptyLog.style.display = 'flex';
+        // Remove existing log lines but keep empty state
+        Array.from(viewer.querySelectorAll('.log-line')).forEach(el => el.remove());
+        return;
+      }
+
+      emptyLog.style.display = 'none';
+
+      // Render log lines
+      viewer.innerHTML = filteredFrames.map(frame => `
+        <div class="log-line">
+          <span class="log-time">${formatElapsed(frame.elapsed_ms)}</span>
+          <span class="log-peer">${DashboardUtils.shortPeerId(frame.peer_id)}</span>
+          <span class="log-arrow ${frame.direction}">${frame.direction === 'sent' ? '&#x2192;' : '&#x2190;'}</span>
+          <span class="log-frame-type">${frame.frame_type}</span>
+          <span class="log-context">${frame.context || ''}</span>
+        </div>
+      `).join('');
+
+      // Auto-scroll to bottom
+      if (document.getElementById('auto-scroll').checked) {
+        viewer.scrollTop = viewer.scrollHeight;
+      }
+    }
+
+    function formatElapsed(ms) {
+      if (ms < 1000) return `${ms}ms`;
+      if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+      if (ms < 3600000) return `${Math.floor(ms / 60000)}m`;
+      return `${Math.floor(ms / 3600000)}h`;
+    }
+
+    function clearLog() {
+      frames = [];
+      renderLog();
+    }
+
+    // Filter buttons
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentFilter = btn.dataset.filter;
+        renderLog();
+      });
+    });
+
+    // Search input
+    document.getElementById('frame-search').addEventListener('input', (e) => {
+      searchQuery = e.target.value;
+      renderLog();
+    });
+
+    // WebSocket updates for real-time frames (if supported)
+    wsManager.on('protocol_frame', (msg) => {
+      frames.unshift({
+        peer_id: msg.peer_id,
+        frame_type: msg.frame_type,
+        direction: msg.direction,
+        elapsed_ms: 0,
+        context: msg.context
+      });
+
+      // Keep only last 500 frames
+      if (frames.length > 500) {
+        frames = frames.slice(0, 500);
+      }
+
+      renderLog();
+    });
+
+    // Start
+    wsManager.connect();
+    loadData();
+
+    // Refresh every 5 seconds
+    setInterval(loadData, 5000);
+  </script>
+</body>
+</html>

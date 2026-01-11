@@ -26,7 +26,9 @@
 //! - `crdt_stats()` - Should report merges and entries
 //! - State should converge across all nodes
 
-use super::{issue_reporter::IssueReport, LibraryVerificationResult, TestResult, VerificationConfig};
+use super::{
+    LibraryVerificationResult, TestResult, VerificationConfig, issue_reporter::IssueReport,
+};
 use std::time::Instant;
 use tracing::info;
 
@@ -144,7 +146,10 @@ async fn test_hyparview_active_view_bounds(_config: &VerificationConfig) -> Test
 
     TestResult::pass_with_message(
         test_name,
-        &format!("Active view size {} within bounds [{}, {}]", active_count, min_expected, max_expected),
+        &format!(
+            "Active view size {} within bounds [{}, {}]",
+            active_count, min_expected, max_expected
+        ),
     )
     .with_duration(start.elapsed().as_millis() as u64)
 }
@@ -175,8 +180,11 @@ async fn test_hyparview_passive_view_populated(_config: &VerificationConfig) -> 
         .with_duration(start.elapsed().as_millis() as u64);
     }
 
-    TestResult::pass_with_message(test_name, &format!("Passive view has {} peers", passive_count))
-        .with_duration(start.elapsed().as_millis() as u64)
+    TestResult::pass_with_message(
+        test_name,
+        &format!("Passive view has {} peers", passive_count),
+    )
+    .with_duration(start.elapsed().as_millis() as u64)
 }
 
 /// Test: HyParView shuffle operations complete successfully
@@ -192,7 +200,10 @@ async fn test_hyparview_shuffle_success(_config: &VerificationConfig) -> TestRes
     let shuffles_initiated = 6;
 
     if shuffles_initiated == 0 {
-        return TestResult::warn(test_name, "No shuffle attempts recorded - test may be too short");
+        return TestResult::warn(
+            test_name,
+            "No shuffle attempts recorded - test may be too short",
+        );
     }
 
     let success_rate = shuffles_completed as f64 / shuffles_initiated as f64;
@@ -204,7 +215,12 @@ async fn test_hyparview_shuffle_success(_config: &VerificationConfig) -> TestRes
                 .title("HyParView shuffle success rate below acceptable threshold")
                 .test_name(test_name)
                 .expected("At least 50% shuffle success rate")
-                .actual(&format!("{:.1}% success rate ({}/{})", success_rate * 100.0, shuffles_completed, shuffles_initiated))
+                .actual(&format!(
+                    "{:.1}% success rate ({}/{})",
+                    success_rate * 100.0,
+                    shuffles_completed,
+                    shuffles_initiated
+                ))
                 .label("performance")
                 .label("HyParView")
                 .build(),
@@ -282,7 +298,10 @@ async fn test_swim_failure_detection_timing(_config: &VerificationConfig) -> Tes
             IssueReport::builder("saorsa-gossip")
                 .title("SWIM failure detection exceeds documented timeout bounds")
                 .test_name(test_name)
-                .expected(&format!("Detection within {}ms (2x suspect_timeout)", max_expected_ms))
+                .expected(&format!(
+                    "Detection within {}ms (2x suspect_timeout)",
+                    max_expected_ms
+                ))
                 .actual(&format!("Detection took {}ms", detection_latency_ms))
                 .label("performance")
                 .label("SWIM")
@@ -293,7 +312,10 @@ async fn test_swim_failure_detection_timing(_config: &VerificationConfig) -> Tes
 
     TestResult::pass_with_message(
         test_name,
-        &format!("Detection latency: {}ms (limit: {}ms)", detection_latency_ms, max_expected_ms),
+        &format!(
+            "Detection latency: {}ms (limit: {}ms)",
+            detection_latency_ms, max_expected_ms
+        ),
     )
     .with_duration(start.elapsed().as_millis() as u64)
 }
@@ -320,12 +342,23 @@ async fn test_swim_ping_success_rate(_config: &VerificationConfig) -> TestResult
     if success_rate < min_acceptable {
         return TestResult::fail(
             test_name,
-            &format!("SWIM ping success rate too low: {:.1}%", success_rate * 100.0),
+            &format!(
+                "SWIM ping success rate too low: {:.1}%",
+                success_rate * 100.0
+            ),
             IssueReport::builder("saorsa-gossip")
                 .title("SWIM ping success rate below acceptable threshold")
                 .test_name(test_name)
-                .expected(&format!("At least {:.0}% ping success rate", min_acceptable * 100.0))
-                .actual(&format!("{:.1}% success rate ({}/{})", success_rate * 100.0, acks_received, pings_sent))
+                .expected(&format!(
+                    "At least {:.0}% ping success rate",
+                    min_acceptable * 100.0
+                ))
+                .actual(&format!(
+                    "{:.1}% success rate ({}/{})",
+                    success_rate * 100.0,
+                    acks_received,
+                    pings_sent
+                ))
                 .label("performance")
                 .label("SWIM")
                 .build(),
@@ -368,8 +401,14 @@ async fn test_plumtree_broadcast_delivery(config: &VerificationConfig) -> TestRe
             IssueReport::builder("saorsa-gossip")
                 .title("Plumtree broadcast does not reach all nodes")
                 .test_name(test_name)
-                .expected(&format!("All {} nodes receive broadcast within {}ms", expected_recipients, delivery_timeout_ms))
-                .actual(&format!("Only {}/{} nodes received", received_count, expected_recipients))
+                .expected(&format!(
+                    "All {} nodes receive broadcast within {}ms",
+                    expected_recipients, delivery_timeout_ms
+                ))
+                .actual(&format!(
+                    "Only {}/{} nodes received",
+                    received_count, expected_recipients
+                ))
                 .label("bug")
                 .label("Plumtree")
                 .build(),
@@ -402,12 +441,18 @@ async fn test_plumtree_group_broadcast_scoping(_config: &VerificationConfig) -> 
     if members_received < group_members {
         return TestResult::fail(
             test_name,
-            &format!("Not all group members received: {}/{}", members_received, group_members),
+            &format!(
+                "Not all group members received: {}/{}",
+                members_received, group_members
+            ),
             IssueReport::builder("saorsa-gossip")
                 .title("Plumtree group broadcast does not reach all group members")
                 .test_name(test_name)
                 .expected(&format!("All {} group members receive", group_members))
-                .actual(&format!("Only {}/{} members received", members_received, group_members))
+                .actual(&format!(
+                    "Only {}/{} members received",
+                    members_received, group_members
+                ))
                 .label("bug")
                 .label("Plumtree")
                 .build(),
@@ -418,12 +463,18 @@ async fn test_plumtree_group_broadcast_scoping(_config: &VerificationConfig) -> 
     if non_members_received > 0 {
         return TestResult::fail(
             test_name,
-            &format!("{} non-members incorrectly received group message", non_members_received),
+            &format!(
+                "{} non-members incorrectly received group message",
+                non_members_received
+            ),
             IssueReport::builder("saorsa-gossip")
                 .title("Plumtree group broadcast leaks to non-members")
                 .test_name(test_name)
                 .expected("Only group members receive broadcast")
-                .actual(&format!("{}/{} non-members also received", non_members_received, non_members))
+                .actual(&format!(
+                    "{}/{} non-members also received",
+                    non_members_received, non_members
+                ))
                 .label("bug")
                 .label("Plumtree")
                 .build(),
@@ -462,7 +513,10 @@ async fn test_crdt_merge_increases_entries(_config: &VerificationConfig) -> Test
                 .title("CRDT merge does not increase entry count")
                 .test_name(test_name)
                 .expected("Entry count increases after merge")
-                .actual(&format!("Entries: {} -> {} (no increase)", initial_entries, final_entries))
+                .actual(&format!(
+                    "Entries: {} -> {} (no increase)",
+                    initial_entries, final_entries
+                ))
                 .label("bug")
                 .label("CRDT")
                 .build(),
@@ -497,7 +551,10 @@ async fn test_crdt_state_convergence(config: &VerificationConfig) -> TestResult 
                 .title("CRDT state does not converge across all nodes")
                 .test_name(test_name)
                 .expected(&format!("All {} nodes have identical state", node_count))
-                .actual(&format!("Only {}/{} nodes converged", converged_nodes, node_count))
+                .actual(&format!(
+                    "Only {}/{} nodes converged",
+                    converged_nodes, node_count
+                ))
                 .label("bug")
                 .label("CRDT")
                 .build(),

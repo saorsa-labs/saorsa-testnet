@@ -439,6 +439,191 @@ pub mod endpoints {
     pub const PROFILE_APPLY: &str = "/node/profile";
     pub const PROFILE_CLEAR: &str = "/node/profile/clear";
     pub const BARRIER: &str = "/barrier";
+
+    // Monitoring API endpoints
+    pub const API_PROBE: &str = "/api/probe";
+    pub const API_HEALTH: &str = "/api/health";
+    pub const API_PROOFS: &str = "/api/proofs";
+    pub const API_PROOFS_CONNECTIVITY: &str = "/api/proofs/connectivity";
+    pub const API_PROOFS_GOSSIP: &str = "/api/proofs/gossip";
+    pub const API_PROOFS_CRDT: &str = "/api/proofs/crdt";
+    pub const API_MATRIX: &str = "/api/matrix";
+    pub const API_PEERS: &str = "/api/peers";
+    pub const API_LOGS: &str = "/api/logs";
+}
+
+// =============================================================================
+// Monitoring API Types
+// =============================================================================
+
+/// Lightweight health probe response for quick connectivity checks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProbeResponse {
+    pub ok: bool,
+    pub agent_id: String,
+    pub timestamp_ms: u64,
+}
+
+/// Extended health response with proof summaries for monitoring.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonitorHealthResponse {
+    pub healthy: bool,
+    pub agent_id: String,
+    pub version: String,
+    pub uptime_secs: u64,
+    pub status: AgentStatus,
+    pub proof_summary: ProofSummary,
+    pub connectivity_summary: ConnectivitySummary,
+    pub resource_usage: Option<ResourceUsage>,
+}
+
+/// Summary of proof generation status.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProofSummary {
+    pub connectivity_pass: bool,
+    pub gossip_pass: bool,
+    pub crdt_pass: bool,
+    pub last_proof_time_secs: Option<u64>,
+}
+
+/// Summary of connectivity status.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectivitySummary {
+    pub total_peers: u32,
+    pub connected_peers: u32,
+    pub reachability_percent: f32,
+}
+
+/// Optional resource usage metrics.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceUsage {
+    pub memory_mb: u64,
+    pub cpu_percent: f32,
+    pub open_connections: u32,
+}
+
+/// Response containing all proofs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProofsResponse {
+    pub agent_id: String,
+    pub timestamp_ms: u64,
+    pub connectivity: Option<ConnectivityProofData>,
+    pub gossip: Option<GossipProofData>,
+    pub crdt: Option<CrdtProofData>,
+}
+
+/// Connectivity proof data for monitoring.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectivityProofData {
+    pub pass: bool,
+    pub total_nodes: u32,
+    pub reachable_nodes: u32,
+    pub direct_connections: u32,
+    pub nat_traversed: u32,
+    pub relayed: u32,
+    pub unreachable: Vec<String>,
+}
+
+/// Gossip proof data for monitoring.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GossipProofData {
+    pub pass: bool,
+    pub hyparview_health: String,
+    pub hyparview_active: u32,
+    pub hyparview_passive: u32,
+    pub swim_alive: u32,
+    pub swim_suspect: u32,
+    pub swim_failed: u32,
+    pub plumtree_eager: u32,
+    pub plumtree_lazy: u32,
+}
+
+/// CRDT proof data for monitoring.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrdtProofData {
+    pub pass: bool,
+    pub converged: bool,
+    pub state_hash: Option<String>,
+    pub converged_nodes: u32,
+    pub divergent_nodes: Vec<String>,
+}
+
+/// Connectivity matrix response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonitorMatrixResponse {
+    pub agent_id: String,
+    pub timestamp_ms: u64,
+    pub matrix: Vec<MatrixEntry>,
+}
+
+/// Single entry in the connectivity matrix.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MatrixEntry {
+    pub peer_id: String,
+    pub peer_short_id: String,
+    pub status: PeerConnectionStatus,
+    pub connection_method: Option<String>,
+    pub rtt_ms: Option<u32>,
+    pub last_seen_secs: Option<u64>,
+}
+
+/// Peer connection status in the matrix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PeerConnectionStatus {
+    Connected,
+    Disconnected,
+    NeverConnected,
+    Unknown,
+}
+
+/// Response containing peers visible to this node.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonitorPeersResponse {
+    pub agent_id: String,
+    pub timestamp_ms: u64,
+    pub peers: Vec<MonitorPeerInfo>,
+    pub total_count: u32,
+}
+
+/// Information about a peer for monitoring.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonitorPeerInfo {
+    pub peer_id: String,
+    pub short_id: String,
+    pub nat_type: String,
+    pub status: PeerConnectionStatus,
+    pub connection_method: Option<String>,
+    pub ip_version: Option<String>,
+    pub rtt_ms: Option<u32>,
+    pub connected_secs: Option<u64>,
+}
+
+/// Response containing recent logs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonitorLogsResponse {
+    pub agent_id: String,
+    pub timestamp_ms: u64,
+    pub logs: Vec<LogEntry>,
+    pub total_available: u64,
+}
+
+/// A single log entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogEntry {
+    pub timestamp_ms: u64,
+    pub level: String,
+    pub target: String,
+    pub message: String,
+}
+
+/// Query parameters for logs endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LogsQuery {
+    pub limit: Option<u32>,
+    pub level: Option<String>,
+    pub since_ms: Option<u64>,
+    pub target: Option<String>,
 }
 
 #[derive(Debug, Clone)]

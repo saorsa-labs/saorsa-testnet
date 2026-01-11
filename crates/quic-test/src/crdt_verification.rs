@@ -126,11 +126,7 @@ impl OperationTracker {
     }
 
     /// Check if clock a happened-before clock b.
-    fn happens_before(
-        &self,
-        a: &HashMap<String, u64>,
-        b: &HashMap<String, u64>,
-    ) -> bool {
+    fn happens_before(&self, a: &HashMap<String, u64>, b: &HashMap<String, u64>) -> bool {
         // a <= b and a != b
         let a_leq_b = a.iter().all(|(k, v)| b.get(k).copied().unwrap_or(0) >= *v);
         let not_equal = a != b;
@@ -698,7 +694,7 @@ impl LiveConvergenceVerifier {
             // Collect divergent nodes (not in majority)
             let divergent: Vec<String> = hash_counts
                 .iter()
-                .filter(|(h, _)| majority.map_or(true, |m| *h != &m))
+                .filter(|(h, _)| majority.is_none_or(|m| *h != &m))
                 .flat_map(|(_, nodes)| nodes.clone())
                 .collect();
 

@@ -8,9 +8,9 @@
 use saorsa_quic_test::{
     TestNode,
     node::TestNodeConfig,
+    proof_orchestrator::{ProofOrchestrator, ProofOrchestratorConfig},
     registry::{RegistryConfig, start_registry_server},
     tui::{App, TuiEvent, run_tui},
-    proof_orchestrator::{ProofOrchestrator, ProofOrchestratorConfig},
 };
 use std::net::SocketAddr;
 use tokio::sync::mpsc;
@@ -38,6 +38,8 @@ struct Args {
     local_only: bool,
     /// Minimum nodes required for proof test
     min_proof_nodes: usize,
+    /// Gossip-first mode: Use epidemic gossip for peer discovery instead of registry
+    gossip_first: bool,
 }
 
 impl Default for Args {
@@ -53,6 +55,7 @@ impl Default for Args {
             quiet: false,
             local_only: false, // Disabled by default - connect to external VPS nodes
             min_proof_nodes: 2,
+            gossip_first: true, // Enabled by default - use epidemic gossip for peer discovery
         }
     }
 }
@@ -100,6 +103,8 @@ fn parse_args() -> Args {
             "-q" | "--quiet" => args.quiet = true,
             "--local-only" => args.local_only = true,
             "--proof-test" => args.proof_test = true,
+            "--gossip-first" => args.gossip_first = true,
+            "--no-gossip-first" => args.gossip_first = false,
             "--min-proof-nodes" => {
                 if let Some(n) = argv.next() {
                     if let Ok(num) = n.parse() {
@@ -142,6 +147,8 @@ OPTIONS:
     --max-peers <N>         Maximum peer connections [default: 10]
     --min-proof-nodes <N>   Minimum nodes for proof test [default: 2]
     --local-only            Disable external VPS connections (for Docker/local testing)
+    --gossip-first          Use epidemic gossip for peer discovery (default: enabled)
+    --no-gossip-first       Use registry-based peer discovery instead of gossip
     -q, --quiet             Disable TUI, log mode only
     -h, --help              Print this help message
 
@@ -225,7 +232,13 @@ async fn main() -> anyhow::Result<()> {
     } else {
         // Run as test node with TUI
         println!("Starting ant-quic test node...");
-        println!("Connecting to registry: {}", args.registry_url);
+        if args.gossip_first {
+            println!("Mode: Gossip-first peer discovery (epidemic gossip)");
+            println!("Bootstrap: Connecting to hardcoded VPS peers");
+        } else {
+            println!("Mode: Registry-based peer discovery");
+            println!("Registry: {}", args.registry_url);
+        }
         println!("\"We will be legion!!\"");
 
         // Create event channel for TUI updates
@@ -243,6 +256,7 @@ async fn main() -> anyhow::Result<()> {
             max_peers: args.max_peers,
             bind_addr,
             local_only: args.local_only,
+            gossip_first: args.gossip_first,
             ..Default::default()
         };
 
@@ -300,8 +314,8 @@ fn convert_gossip_stats(
     node_stats: &saorsa_quic_test::registry::NodeGossipStats,
 ) -> saorsa_quic_test::epidemic_gossip::GossipStats {
     use saorsa_quic_test::epidemic_gossip::{
-        ConnectionBreakdown, CoordinatorStats, CrdtStats, GossipStats, GroupStats,
-        HyParViewStats, PlumtreeStats, RendezvousStats, SwimStats,
+        ConnectionBreakdown, CoordinatorStats, CrdtStats, GossipStats, GroupStats, HyParViewStats,
+        PlumtreeStats, RendezvousStats, SwimStats,
     };
 
     GossipStats {

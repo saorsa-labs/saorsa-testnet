@@ -1,6 +1,27 @@
 //! Web dashboard for the ant-quic test network.
 //!
 //! Provides a Three.js globe visualization and real-time statistics.
+//!
+//! # Dashboard Pages
+//!
+//! - `/` - Globe visualization (index.html)
+//! - `/overview` - Overview page with proofs, stats, peers
+//! - `/gossip` - Gossip health (HyParView, SWIM, Plumtree)
+//! - `/matrix` - Connectivity matrix (N×N)
+//! - `/log` - Protocol log (real-time frames)
+//!
+//! # API Endpoints
+//!
+//! - `GET /api/stats` - Network statistics
+//! - `GET /api/peers` - All registered peers
+//! - `GET /api/overview` - Aggregated overview data
+//! - `GET /api/connections` - Connection history with directional stats
+//! - `GET /api/frames` - Recent protocol frames
+//! - `GET /api/gossip` - Gossip protocol health
+
+pub mod types;
+
+pub use types::*;
 
 use rust_embed::Embed;
 use std::sync::Arc;
@@ -17,12 +38,25 @@ struct StaticFiles;
 pub fn dashboard_routes(
     store: Arc<PeerStore>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
+    // Page routes
     let index = warp::path::end().and_then(serve_index);
+    let overview = warp::path("overview")
+        .and(warp::path::end())
+        .and_then(serve_overview);
+    let gossip = warp::path("gossip")
+        .and(warp::path::end())
+        .and_then(serve_gossip);
+    let matrix = warp::path("matrix")
+        .and(warp::path::end())
+        .and_then(serve_matrix);
+    let log = warp::path("log").and(warp::path::end()).and_then(serve_log);
 
+    // Static files
     let static_files = warp::path("static")
         .and(warp::path::tail())
         .and_then(serve_static);
 
+    // Existing API endpoints
     let api_stats = warp::path!("api" / "stats")
         .and(warp::get())
         .and(with_store(store.clone()))
@@ -33,6 +67,29 @@ pub fn dashboard_routes(
         .and(with_store(store.clone()))
         .and_then(get_peers);
 
+    // New API endpoints
+    let api_overview = warp::path!("api" / "overview")
+        .and(warp::get())
+        .and(with_store(store.clone()))
+        .and_then(get_overview);
+
+    let api_connections = warp::path!("api" / "connections")
+        .and(warp::get())
+        .and(with_store(store.clone()))
+        .and_then(get_connections);
+
+    let api_frames = warp::path!("api" / "frames")
+        .and(warp::get())
+        .and(warp::query::<FramesQuery>())
+        .and(with_store(store.clone()))
+        .and_then(get_frames);
+
+    let api_gossip = warp::path!("api" / "gossip")
+        .and(warp::get())
+        .and(with_store(store.clone()))
+        .and_then(get_gossip);
+
+    // WebSocket
     let ws_live = warp::path!("ws" / "live")
         .and(warp::ws())
         .and(with_store(store))
@@ -40,11 +97,36 @@ pub fn dashboard_routes(
             ws.on_upgrade(move |socket| handle_websocket(socket, store))
         });
 
-    index
-        .or(static_files)
-        .or(api_stats)
+    // Combine routes in groups to avoid type recursion issues
+    // Box intermediate groups to break the deeply nested Or<Or<Or<...>>> type chain
+    let pages = index
+        .or(overview)
+        .or(gossip)
+        .or(matrix)
+        .or(log)
+        .boxed();
+
+    let api = api_stats
         .or(api_peers)
-        .or(ws_live)
+        .or(api_overview)
+        .or(api_connections)
+        .or(api_frames)
+        .or(api_gossip)
+        .boxed();
+
+    pages.or(static_files).or(api).or(ws_live)
+}
+
+/// Query parameters for frames endpoint.
+#[derive(Debug, serde::Deserialize)]
+pub struct FramesQuery {
+    /// Maximum number of frames to return (default: 200)
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+}
+
+fn default_limit() -> usize {
+    200
 }
 
 fn with_store(
@@ -55,6 +137,31 @@ fn with_store(
 
 async fn serve_index() -> Result<impl warp::Reply, warp::Rejection> {
     match StaticFiles::get("index.html") {
+        Some(content) => Ok(warp::reply::html(
+            String::from_utf8_lossy(content.data.as_ref()).to_string(),
+        )),
+        None => Err(warp::reject::not_found()),
+    }
+}
+
+async fn serve_overview() -> Result<impl warp::Reply, warp::Rejection> {
+    serve_html_page("overview.html").await
+}
+
+async fn serve_gossip() -> Result<impl warp::Reply, warp::Rejection> {
+    serve_html_page("gossip.html").await
+}
+
+async fn serve_matrix() -> Result<impl warp::Reply, warp::Rejection> {
+    serve_html_page("matrix.html").await
+}
+
+async fn serve_log() -> Result<impl warp::Reply, warp::Rejection> {
+    serve_html_page("log.html").await
+}
+
+async fn serve_html_page(filename: &str) -> Result<impl warp::Reply, warp::Rejection> {
+    match StaticFiles::get(filename) {
         Some(content) => Ok(warp::reply::html(
             String::from_utf8_lossy(content.data.as_ref()).to_string(),
         )),
@@ -85,6 +192,33 @@ async fn get_stats(store: Arc<PeerStore>) -> Result<impl warp::Reply, warp::Reje
 async fn get_peers(store: Arc<PeerStore>) -> Result<impl warp::Reply, warp::Rejection> {
     let peers = store.get_all_peers();
     Ok(warp::reply::json(&peers))
+}
+
+/// Get aggregated overview data for the overview page.
+async fn get_overview(store: Arc<PeerStore>) -> Result<impl warp::Reply, warp::Rejection> {
+    let response = store.get_overview_data();
+    Ok(warp::reply::json(&response))
+}
+
+/// Get connection history for the connectivity matrix.
+async fn get_connections(store: Arc<PeerStore>) -> Result<impl warp::Reply, warp::Rejection> {
+    let response = store.get_connections_data();
+    Ok(warp::reply::json(&response))
+}
+
+/// Get recent protocol frames for the log display.
+async fn get_frames(
+    query: FramesQuery,
+    store: Arc<PeerStore>,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    let response = store.get_frames_data(query.limit);
+    Ok(warp::reply::json(&response))
+}
+
+/// Get gossip protocol health data.
+async fn get_gossip(store: Arc<PeerStore>) -> Result<impl warp::Reply, warp::Rejection> {
+    let response = store.get_gossip_data();
+    Ok(warp::reply::json(&response))
 }
 
 async fn handle_websocket(ws: warp::ws::WebSocket, store: Arc<PeerStore>) {

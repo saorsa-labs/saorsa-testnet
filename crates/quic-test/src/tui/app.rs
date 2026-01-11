@@ -617,7 +617,9 @@ impl InputEvent {
             KeyCode::BackTab => Self::PrevTab,
             KeyCode::Char('1') => Self::TabOverview,
             KeyCode::Char('2') | KeyCode::Char('g') | KeyCode::Char('G') => Self::TabGossipHealth,
-            KeyCode::Char('3') | KeyCode::Char('c') | KeyCode::Char('C') => Self::TabConnectivityMatrix,
+            KeyCode::Char('3') | KeyCode::Char('c') | KeyCode::Char('C') => {
+                Self::TabConnectivityMatrix
+            }
             KeyCode::Char('4') | KeyCode::Char('l') | KeyCode::Char('L') => Self::TabProtocolLog,
             KeyCode::Char('p') | KeyCode::Char('P') => Self::ToggleProofHelp,
             KeyCode::Esc => Self::Quit,

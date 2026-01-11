@@ -1,13 +1,14 @@
 //! Gossip-first peer discovery module.
 //!
 //! This module implements the gossip-first peer discovery strategy:
-//! 1. Load bootstrap cache from disk (or use hardcoded bootstrap nodes)
+//! 1. Load bootstrap cache from disk (or use hardcoded VPS bootstrap peers)
 //! 2. Gossip cache to connected peers (full sync on connect, deltas afterward)
 //! 3. Try direct connection to peers
 //! 4. If direct fails, request PUNCH_ME_NOW via intermediary
 //! 5. Fall back to relay if hole-punch fails (30s timeout)
 //!
-//! Registry is used for REPORTING only, not discovery.
+//! **Key principle**: Registry is used for REPORTING only, not discovery.
+//! Discovery comes from the hardcoded VPS bootstrap peers and epidemic gossip.
 
 use ant_quic::PeerId;
 use ant_quic::bootstrap_cache::{
@@ -21,6 +22,12 @@ use std::time::{Duration, SystemTime};
 use tokio::sync::{RwLock, mpsc};
 use tracing::{debug, info};
 
+// Import hardcoded VPS bootstrap peers
+use crate::bootstrap_peers::{self, BOOTSTRAP_PEERS, BootstrapPeer};
+
+/// Legacy DNS-based bootstrap nodes (deprecated, kept for backward compatibility).
+/// Use `bootstrap_peers::bootstrap_addrs_v4()` for the new IP-based approach.
+#[deprecated(note = "Use bootstrap_peers::bootstrap_addrs_v4() instead")]
 pub const BOOTSTRAP_NODES: &[(&str, &str)] = &[
     ("saorsa-1.saorsalabs.com", "9001"),
     ("saorsa-2.saorsalabs.com", "9001"),
@@ -458,23 +465,93 @@ impl PeerDiscoveryService {
         false
     }
 
+    /// Seed the cache with hardcoded VPS bootstrap peers.
+    ///
+    /// This ensures we always have known-good peers to connect to, even
+    /// on first startup. The VPS nodes form the backbone of the network
+    /// and are always available.
+    ///
+    /// Returns the number of peers added (0 if all already exist).
+    pub async fn seed_with_vps_peers(&self) -> usize {
+        use sha2::{Digest, Sha256};
+
+        let mut added = 0;
+
+        for vps_peer in BOOTSTRAP_PEERS {
+            // Create a deterministic PeerId from the VPS name
+            // (In production, these would be the actual peer IDs from the VPS nodes)
+            let peer_id_bytes = {
+                let mut hasher = Sha256::new();
+                hasher.update(vps_peer.name.as_bytes());
+                hasher.update(vps_peer.ipv4.octets());
+                let hash = hasher.finalize();
+                let mut bytes = [0u8; 32];
+                bytes.copy_from_slice(&hash[..32]);
+                bytes
+            };
+            let peer_id = PeerId(peer_id_bytes);
+
+            // Check if already in cache
+            if self.cache.contains(&peer_id).await {
+                continue;
+            }
+
+            // Add to cache
+            let mut cached_peer = CachedPeer::new(peer_id, vps_peer.all_addrs(), PeerSource::Seed);
+
+            // VPS nodes are public (no NAT)
+            cached_peer.capabilities.nat_type = Some(CacheNatType::None);
+            cached_peer.capabilities.supports_coordination = vps_peer.is_coordinator;
+            cached_peer.capabilities.supports_relay = vps_peer.is_relay;
+
+            self.cache.upsert(cached_peer).await;
+            added += 1;
+
+            info!(
+                "Added VPS bootstrap peer: {} at {:?}",
+                vps_peer.name,
+                vps_peer.socket_addr_v4()
+            );
+        }
+
+        if added > 0 {
+            info!(
+                "Seeded cache with {} VPS bootstrap peers (total: {})",
+                added,
+                self.cache.peer_count().await
+            );
+        }
+
+        added
+    }
+
     /// Get peers to try connecting to (epsilon-greedy selection from cache).
     pub async fn get_peers_to_connect(&self, count: usize) -> Vec<CachedPeer> {
         self.cache.select_peers(count).await
     }
 
-    /// Get hardcoded bootstrap addresses.
+    /// Get hardcoded bootstrap addresses from VPS peer list.
+    ///
+    /// This uses direct IP addresses instead of DNS resolution for reliability.
+    /// The VPS bootstrap peers are always available and provide the initial
+    /// connectivity for gossip-based peer discovery.
     pub fn get_bootstrap_addresses() -> Vec<SocketAddr> {
-        let mut addrs = Vec::new();
-        for (host, port) in BOOTSTRAP_NODES {
-            // Resolve hostname
-            if let Ok(resolved) =
-                std::net::ToSocketAddrs::to_socket_addrs(&format!("{}:{}", host, port))
-            {
-                addrs.extend(resolved);
-            }
-        }
-        addrs
+        bootstrap_peers::bootstrap_addrs_v4()
+    }
+
+    /// Get bootstrap addresses including IPv6 where available.
+    pub fn get_bootstrap_addresses_all() -> Vec<SocketAddr> {
+        bootstrap_peers::bootstrap_addrs_all()
+    }
+
+    /// Get the relay node address (saorsa-1).
+    pub fn get_relay_node() -> &'static BootstrapPeer {
+        bootstrap_peers::relay_node()
+    }
+
+    /// Get all coordinator nodes.
+    pub fn get_coordinator_nodes() -> Vec<&'static BootstrapPeer> {
+        bootstrap_peers::coordinator_nodes()
     }
 
     /// Generate full sync message for a peer.

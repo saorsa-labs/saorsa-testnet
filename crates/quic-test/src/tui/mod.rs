@@ -45,7 +45,8 @@ pub use app::{App, AppState, InputEvent, Tab};
 pub use types::{
     CacheHealth, ConnectedPeer, ConnectionQuality, ConnectivityTestResults, FrameDirection,
     GeographicDistribution, LocalNodeInfo, NatTraversalPhase, NatTypeAnalytics, NetworkStatistics,
-    ProofStatus, ProtocolFrame, TestConnectivityMethod, TrafficDirection, TrafficType, country_flag,
+    ProofStatus, ProtocolFrame, TestConnectivityMethod, TrafficDirection, TrafficType,
+    country_flag,
 };
 
 use crossterm::{

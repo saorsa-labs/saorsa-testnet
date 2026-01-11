@@ -218,7 +218,9 @@ impl GossipVerifier {
         for m in self.swim_measurements.values() {
             aggregate.ping_req_sent += m.ping_req_sent;
             aggregate.ping_req_success += m.ping_req_success;
-            aggregate.detection_latencies_ms.extend(&m.detection_latencies_ms);
+            aggregate
+                .detection_latencies_ms
+                .extend(&m.detection_latencies_ms);
         }
         aggregate
     }
@@ -365,7 +367,11 @@ impl GossipVerifier {
         // Check protocol period consistency
         // If all nodes have similar ping counts, protocol is consistent
         if self.node_stats.len() > 1 {
-            let ping_counts: Vec<_> = self.node_stats.values().map(|s| s.swim.pings_sent).collect();
+            let ping_counts: Vec<_> = self
+                .node_stats
+                .values()
+                .map(|s| s.swim.pings_sent)
+                .collect();
             let avg_pings = ping_counts.iter().sum::<u64>() / ping_counts.len() as u64;
             let variance: f64 = ping_counts
                 .iter()
@@ -451,8 +457,8 @@ impl GossipVerifier {
         let plumtree_measurements = self.get_aggregated_plumtree_measurements();
         if plumtree_measurements.ihave_sent > 0 {
             // Calculate from actual measurements: successful grafts / IHAVEs sent
-            proof.ihave_graft_success_rate =
-                plumtree_measurements.graft_received as f64 / plumtree_measurements.ihave_sent as f64;
+            proof.ihave_graft_success_rate = plumtree_measurements.graft_received as f64
+                / plumtree_measurements.ihave_sent as f64;
         } else if total_grafts > 0 || total_prunes > 0 {
             // Fall back: if we have graft/prune activity from stats, estimate from that
             // Grafts indicate successful recovery, so use ratio of grafts to total activity
@@ -590,7 +596,11 @@ pub struct VerificationSummary {
 
 impl std::fmt::Display for VerificationSummary {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "Gossip Protocol Verification ({} nodes):", self.nodes_analyzed)?;
+        writeln!(
+            f,
+            "Gossip Protocol Verification ({} nodes):",
+            self.nodes_analyzed
+        )?;
         writeln!(
             f,
             "  HyParView: {} - {}",

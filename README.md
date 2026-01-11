@@ -258,7 +258,7 @@ Prometheus metrics available at `/metrics` on each node:
 - `saorsa_gossip_messages_total` - Gossip messages sent/received
 - `saorsa_throughput_bytes` - Data transferred
 
-Dashboard: https://saorsa-1.saorsalabs.com (Grafana)
+Dashboard: https://saorsa-1.saorsalabs.com
 
 ## License
 

@@ -65,6 +65,16 @@ pub struct TestNodeConfig {
     /// Local-only mode: Disable external VPS bootstrap connections.
     /// Use this for Docker/local testing to avoid NAT traversal to unreachable external nodes.
     pub local_only: bool,
+    /// Gossip-first mode: Use epidemic gossip for peer discovery instead of registry.
+    ///
+    /// When enabled:
+    /// - Bootstrap peers are loaded from hardcoded VPS IPs (no DNS dependency)
+    /// - Peer discovery happens via epidemic gossip (saorsa-gossip)
+    /// - Registry is used for REPORTING only, not peer discovery
+    /// - Peer cache is synced via gossip on connect
+    ///
+    /// This is the recommended mode for production and testing.
+    pub gossip_first: bool,
 }
 
 impl Default for TestNodeConfig {
@@ -81,6 +91,8 @@ impl Default for TestNodeConfig {
             heartbeat_interval: Duration::from_secs(5),
             // Local-only mode disabled by default (connect to external VPS nodes)
             local_only: false,
+            // Gossip-first mode enabled by default (use epidemic gossip for peer discovery)
+            gossip_first: true,
         }
     }
 }
@@ -1015,11 +1027,15 @@ impl TestNode {
                                                 GossipConnectionType::DirectIpv4
                                             };
                                             epidemic_gossip_for_events
-                                                .set_connection_type(gossip_peer_id, gossip_conn_type)
+                                                .set_connection_type(
+                                                    gossip_peer_id,
+                                                    gossip_conn_type,
+                                                )
                                                 .await;
 
-                                            if let Err(e) =
-                                                epidemic_gossip_for_events.add_peer(gossip_peer_id).await
+                                            if let Err(e) = epidemic_gossip_for_events
+                                                .add_peer(gossip_peer_id)
+                                                .await
                                             {
                                                 debug!(
                                                     "Could not add outbound peer {} to HyParView: {:?}",
@@ -2719,8 +2735,9 @@ impl TestNode {
                                                         direct_ipv4: announcement.peer.is_public,
                                                         direct_ipv6: false,
                                                         hole_punch: true,
-                                                        relay: false,
-                                                        coordinator: false,
+                                                        // Public nodes can relay and coordinate
+                                                        relay: announcement.peer.is_public,
+                                                        coordinator: announcement.peer.is_public,
                                                         supports_dual_stack: false,
                                                     },
                                                     epoch: announcement.timestamp_ms,
@@ -2779,8 +2796,9 @@ impl TestNode {
                                                 direct_ipv4: announcement.peer.is_public,
                                                 direct_ipv6: false,
                                                 hole_punch: true,
-                                                relay: false,
-                                                coordinator: false,
+                                                // Public nodes can relay and coordinate
+                                                relay: announcement.peer.is_public,
+                                                coordinator: announcement.peer.is_public,
                                                 supports_dual_stack: false,
                                             },
                                             epoch: announcement.timestamp_ms,
@@ -2918,9 +2936,9 @@ impl TestNode {
                                     debug!("Failed to publish gossip-health: {}", e);
                                 } else {
                                     info!(
-                                            "CRDT sync: published gossip-health (entries={}, merges={}) to group",
-                                            crdt_stats.entries, crdt_stats.merges
-                                        );
+                                        "CRDT sync: published gossip-health (entries={}, merges={}) to group",
+                                        crdt_stats.entries, crdt_stats.merges
+                                    );
                                 }
                             }
                         }
@@ -3620,16 +3638,25 @@ impl TestNode {
 
         // Detect actual network capabilities
         let ipv6_available = has_global_ipv6();
+        // Check if we're public (can act as relay/coordinator)
+        let rs = self.relay_state.read().await;
+        let is_public = rs.are_we_public();
+        drop(rs);
+
         let capabilities = NodeCapabilities {
             pqc: true,
             ipv4: true,
             ipv6: ipv6_available,
             nat_traversal: true,
-            relay: false,
+            // Public nodes can relay traffic for others
+            relay: is_public,
         };
 
         if ipv6_available {
             info!("IPv6 connectivity detected");
+        }
+        if is_public {
+            info!("Public node detected - will advertise relay capability");
         }
 
         let registration = NodeRegistration {
@@ -3822,6 +3849,8 @@ impl TestNode {
         let full_mesh_probes = Arc::clone(&self.full_mesh_probes);
         let event_tx = self.event_tx.clone();
         let geo_provider = Arc::clone(&self.geo_provider);
+        // Clone relay state to check public status for re-registration
+        let relay_state = Arc::clone(&self.relay_state);
 
         tokio::spawn(async move {
             info!("DIAGNOSTIC: Heartbeat task STARTED - entering main loop");
@@ -3873,14 +3902,20 @@ impl TestNode {
                 let ext_addrs = if let Ok(guard) = external_addresses.try_read() {
                     guard.clone()
                 } else {
-                    debug!("Heartbeat #{}: external_addresses lock contended, using empty", heartbeat_count);
+                    debug!(
+                        "Heartbeat #{}: external_addresses lock contended, using empty",
+                        heartbeat_count
+                    );
                     Vec::new()
                 };
 
                 let mut stats = if let Ok(guard) = nat_stats.try_read() {
                     guard.clone()
                 } else {
-                    debug!("Heartbeat #{}: nat_stats lock contended, using default", heartbeat_count);
+                    debug!(
+                        "Heartbeat #{}: nat_stats lock contended, using default",
+                        heartbeat_count
+                    );
                     NatStats::default()
                 };
 
@@ -4125,12 +4160,20 @@ impl TestNode {
 
                         // Detect actual network capabilities
                         let ipv6_available = has_global_ipv6();
+                        // Check if we're public (can act as relay/coordinator)
+                        let is_public = if let Ok(rs) = relay_state.try_read() {
+                            rs.are_we_public()
+                        } else {
+                            false
+                        };
+
                         let capabilities = NodeCapabilities {
                             pqc: true,
                             ipv4: true,
                             ipv6: ipv6_available,
                             nat_traversal: true,
-                            relay: false,
+                            // Public nodes can relay traffic for others
+                            relay: is_public,
                         };
 
                         let registration = NodeRegistration {
@@ -4242,12 +4285,15 @@ impl TestNode {
 
     /// Connect to peers and test bidirectional NAT traversal.
     ///
-    /// Flow:
-    /// 1. Get all peers from registry + gossip
-    /// 2. Connect to any peer we haven't fully tested yet  
-    /// 3. After connecting, send DisconnectAndConnectBack message
-    /// 4. Peer disconnects, waits 30s, reconnects (fresh NAT test)
-    /// 5. When peer connects back → bidirectional verified
+    /// Flow (gossip-first mode):
+    /// 1. Get peers from gossip/bootstrap cache (primary)
+    /// 2. Optionally supplement with registry peers (reporting mode)
+    /// 3. Connect to any peer we haven't fully tested yet
+    /// 4. After connecting, send DisconnectAndConnectBack message
+    /// 5. Peer disconnects, waits 30s, reconnects (fresh NAT test)
+    /// 6. When peer connects back → bidirectional verified
+    ///
+    /// In gossip-first mode, the registry is only used for reporting, not discovery.
     #[allow(clippy::excessive_nesting)]
     fn spawn_connect_loop(&self) -> tokio::task::JoinHandle<()> {
         let registry = RegistryClient::new(&self.config.registry_url);
@@ -4270,6 +4316,7 @@ impl TestNode {
         let pending_outbound = Arc::clone(&self.pending_outbound);
         let gossip_integration = Arc::clone(&self.gossip_integration);
         let relay_state = Arc::clone(&self.relay_state);
+        let gossip_first = self.config.gossip_first;
         let epidemic_gossip = Arc::clone(&self.epidemic_gossip);
         let outbound_connections = Arc::clone(&self.outbound_connections);
         #[allow(unused_variables)]
@@ -4286,19 +4333,48 @@ impl TestNode {
                     ticker.tick().await;
                 }
 
-                // Fetch peer list from registry (only LIVE peers with recent heartbeat)
-                let registry_peers = match registry.get_peers().await {
-                    Ok(p) => p,
-                    Err(e) => {
-                        warn!("Failed to fetch peers from registry: {}", e);
-                        Vec::new() // Continue with gossip peers only
+                // === GOSSIP-FIRST PEER DISCOVERY ===
+                //
+                // In gossip-first mode:
+                // - Primary source: Gossip + hardcoded VPS bootstrap peers
+                // - Secondary source: Registry (optional, for additional peers)
+                // - Registry is used for REPORTING only, not required for discovery
+                //
+                // In legacy mode:
+                // - Primary source: Registry
+                // - Secondary source: Gossip
+
+                // Get peers from gossip (decentralized discovery)
+                let gossip_announcements = gossip_integration.discovery().get_peers().await;
+
+                // Fetch peers from registry (optional in gossip-first mode)
+                let registry_peers = if gossip_first {
+                    // In gossip-first mode, registry fetch is optional
+                    // We still try to get peers for additional coverage, but don't depend on it
+                    match registry.get_peers().await {
+                        Ok(p) => {
+                            debug!(
+                                "Gossip-first: Got {} peers from registry (supplemental)",
+                                p.len()
+                            );
+                            p
+                        }
+                        Err(e) => {
+                            // This is expected in gossip-first mode - registry is optional
+                            debug!("Gossip-first: Registry fetch skipped ({})", e);
+                            Vec::new()
+                        }
+                    }
+                } else {
+                    // Legacy mode: registry is primary source
+                    match registry.get_peers().await {
+                        Ok(p) => p,
+                        Err(e) => {
+                            warn!("Failed to fetch peers from registry: {}", e);
+                            Vec::new()
+                        }
                     }
                 };
-
-                // Also fetch peers from gossip (decentralized discovery)
-                // Gossip peers are marked is_active=false so we don't count failures
-                // (we don't know if they're actually online without registry confirmation)
-                let gossip_announcements = gossip_integration.discovery().get_peers().await;
 
                 // Build a set of registry peer IDs for deduplication
                 let registry_peer_ids: std::collections::HashSet<_> =
@@ -4354,6 +4430,69 @@ impl TestNode {
                         gossip_peers.len()
                     );
                     peers.extend(gossip_peers);
+                }
+
+                // In gossip-first mode, add hardcoded VPS bootstrap peers
+                // These are always available and ensure connectivity even when
+                // gossip/registry discovery returns no peers
+                if gossip_first {
+                    use crate::bootstrap_peers::BOOTSTRAP_PEERS;
+
+                    let existing_peer_ids: std::collections::HashSet<_> =
+                        peers.iter().map(|p| p.peer_id.clone()).collect();
+
+                    for vps_peer in BOOTSTRAP_PEERS {
+                        // Create deterministic peer ID for VPS node
+                        use sha2::{Digest, Sha256};
+                        let peer_id_bytes = {
+                            let mut hasher = Sha256::new();
+                            hasher.update(vps_peer.name.as_bytes());
+                            hasher.update(vps_peer.ipv4.octets());
+                            let hash = hasher.finalize();
+                            hex::encode(&hash[..8]) // First 8 bytes as hex
+                        };
+
+                        // Skip if already in the peer list
+                        if existing_peer_ids.contains(&peer_id_bytes) {
+                            continue;
+                        }
+
+                        // Add VPS peer with direct IP address
+                        let vps_peer_info = PeerInfo {
+                            peer_id: peer_id_bytes,
+                            addresses: vps_peer.all_addrs(),
+                            nat_type: NatType::None, // VPS nodes are public
+                            country_code: None,
+                            latitude: 0.0,
+                            longitude: 0.0,
+                            last_seen: std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0),
+                            connection_success_rate: 1.0, // VPS nodes are reliable
+                            capabilities: NodeCapabilities {
+                                pqc: true,
+                                ipv4: true,
+                                ipv6: vps_peer.ipv6.is_some(),
+                                nat_traversal: vps_peer.is_coordinator,
+                                relay: vps_peer.is_relay,
+                            },
+                            version: String::from("vps-bootstrap"),
+                            is_active: true, // VPS nodes are always active
+                            status: Default::default(),
+                            bytes_sent: 0,
+                            bytes_received: 0,
+                            connected_peers: 0,
+                            gossip_stats: None,
+                            full_mesh_probes: None,
+                        };
+                        peers.push(vps_peer_info);
+                    }
+
+                    debug!(
+                        "Gossip-first: Added {} VPS bootstrap peers to candidate list",
+                        BOOTSTRAP_PEERS.len()
+                    );
                 }
 
                 // Update existing tracked peers with fresh registry data (especially NAT type)
@@ -4985,10 +5124,7 @@ impl TestNode {
                     for peer_id in &peers_to_remove {
                         // Check direction before removing to decrement correct counter
                         if let Some(removed_peer) = peers.remove(peer_id) {
-                            if matches!(
-                                removed_peer.direction,
-                                ConnectionDirection::Outbound
-                            ) {
+                            if matches!(removed_peer.direction, ConnectionDirection::Outbound) {
                                 outbound_removed += 1;
                             }
                         }
@@ -5260,8 +5396,7 @@ impl TestNode {
                 // Mark proof as running
                 let mut running_status = ProofStatus::new();
                 running_status.running = true;
-                let _ = event_tx
-                    .try_send(TuiEvent::ProofStatusUpdate(running_status));
+                let _ = event_tx.try_send(TuiEvent::ProofStatusUpdate(running_status));
 
                 // Create proof orchestrator
                 let mut orchestrator = ProofOrchestrator::with_config(ProofOrchestratorConfig {
@@ -5301,10 +5436,9 @@ impl TestNode {
                 orchestrator.record_gossip_stats(&peer_id, gossip_stats.clone());
 
                 // Try to fetch additional peer data from registry if available
-                if let Ok(registry_peers) =
-                    crate::registry::RegistryClient::new(&registry_url)
-                        .get_peers()
-                        .await
+                if let Ok(registry_peers) = crate::registry::RegistryClient::new(&registry_url)
+                    .get_peers()
+                    .await
                 {
                     for peer in &registry_peers {
                         if peer.peer_id != peer_id {
@@ -5398,8 +5532,8 @@ impl TestNode {
                     .unwrap_or(false);
                 status.hyparview_active = gossip_stats.hyparview.active_view_size;
                 status.swim_alive = gossip_stats.swim.alive_count;
-                status.tree_valid =
-                    gossip_stats.plumtree.eager_peers > 0 || gossip_stats.plumtree.messages_sent > 0;
+                status.tree_valid = gossip_stats.plumtree.eager_peers > 0
+                    || gossip_stats.plumtree.messages_sent > 0;
 
                 // CRDT
                 status.crdt_pass = report

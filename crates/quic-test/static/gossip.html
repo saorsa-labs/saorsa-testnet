@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gossip Health - Saorsa Network Dashboard</title>
+  <link rel="stylesheet" href="/static/css/dashboard.css">
+</head>
+<body>
+  <div class="dashboard">
+    <header class="header">
+      <h1>Saorsa Network Dashboard</h1>
+      <nav class="header-nav">
+        <a href="/">Globe</a>
+        <a href="/overview">Overview</a>
+        <a href="/gossip" class="active">Gossip</a>
+        <a href="/matrix">Matrix</a>
+        <a href="/log">Log</a>
+      </nav>
+      <div class="status-indicator">
+        <span class="status-dot"></span>
+        <span class="status-text">Connecting...</span>
+      </div>
+    </header>
+
+    <main class="main-content">
+      <!-- Protocol Status Cards -->
+      <div class="grid-3 mb-3">
+        <!-- HyParView -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">HyParView Membership</span>
+            <div id="hyparview-health"></div>
+          </div>
+          <div class="card-body">
+            <div class="stat-group mb-3">
+              <span class="stat-label">Active View</span>
+              <div class="flex items-center gap-2">
+                <span class="stat-value" id="hyparview-active">-</span>
+                <span class="text-dim">/ <span id="hyparview-active-max">6</span></span>
+              </div>
+              <div class="progress-bar mt-1">
+                <div class="progress-fill" id="hyparview-active-bar" style="width: 0%"></div>
+              </div>
+            </div>
+
+            <div class="stat-group mb-3">
+              <span class="stat-label">Passive View</span>
+              <div class="flex items-center gap-2">
+                <span class="stat-value small" id="hyparview-passive">-</span>
+                <span class="text-dim">/ <span id="hyparview-passive-max">30</span></span>
+              </div>
+              <div class="progress-bar mt-1">
+                <div class="progress-fill" id="hyparview-passive-bar" style="width: 0%"></div>
+              </div>
+            </div>
+
+            <div class="stat-group">
+              <span class="stat-label">Active Peers</span>
+              <div id="hyparview-peers" class="mt-1 text-secondary">-</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SWIM -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">SWIM Failure Detection</span>
+            <div id="swim-health"></div>
+          </div>
+          <div class="card-body">
+            <div class="grid-3 mb-3">
+              <div class="stat-group">
+                <span class="stat-label">Alive</span>
+                <span class="stat-value text-success" id="swim-alive">-</span>
+              </div>
+              <div class="stat-group">
+                <span class="stat-label">Suspect</span>
+                <span class="stat-value text-warning" id="swim-suspect">-</span>
+              </div>
+              <div class="stat-group">
+                <span class="stat-label">Failed</span>
+                <span class="stat-value text-error" id="swim-failed">-</span>
+              </div>
+            </div>
+
+            <div class="stat-group">
+              <span class="stat-label">Membership Size</span>
+              <span class="stat-value small" id="swim-membership">-</span>
+            </div>
+
+            <div class="stat-group mt-3">
+              <span class="stat-label">Membership Health</span>
+              <div class="progress-bar mt-1">
+                <div class="progress-fill" id="swim-health-bar" style="width: 0%"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Plumtree -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Plumtree Broadcast</span>
+            <div id="plumtree-health"></div>
+          </div>
+          <div class="card-body">
+            <div class="grid-2 mb-3">
+              <div class="stat-group">
+                <span class="stat-label">Eager Peers</span>
+                <span class="stat-value" id="plumtree-eager">-</span>
+              </div>
+              <div class="stat-group">
+                <span class="stat-label">Lazy Peers</span>
+                <span class="stat-value small" id="plumtree-lazy">-</span>
+              </div>
+            </div>
+
+            <div class="stat-group mb-3">
+              <span class="stat-label">Tree Depth</span>
+              <span class="stat-value small" id="plumtree-depth">-</span>
+            </div>
+
+            <div class="grid-2">
+              <div class="stat-group">
+                <span class="stat-label">Broadcast</span>
+                <span class="stat-value small text-success" id="plumtree-broadcast">-</span>
+              </div>
+              <div class="stat-group">
+                <span class="stat-label">Received</span>
+                <span class="stat-value small text-info" id="plumtree-received">-</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Message Statistics -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Message Statistics</span>
+        </div>
+        <div class="card-body">
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Metric</th>
+                  <th>Sent</th>
+                  <th>Received</th>
+                  <th>Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Announcements</td>
+                  <td id="announcements-sent">-</td>
+                  <td id="announcements-received">-</td>
+                  <td id="announcements-total">-</td>
+                </tr>
+                <tr>
+                  <td>Peer Queries</td>
+                  <td id="queries-sent">-</td>
+                  <td id="queries-received">-</td>
+                  <td id="queries-total">-</td>
+                </tr>
+                <tr>
+                  <td>Peer Responses</td>
+                  <td id="responses-sent">-</td>
+                  <td id="responses-received">-</td>
+                  <td id="responses-total">-</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Cache Statistics -->
+      <div class="card mt-3">
+        <div class="card-header">
+          <span class="card-title">Bootstrap Cache</span>
+        </div>
+        <div class="card-body">
+          <div class="grid-4">
+            <div class="stat-group">
+              <span class="stat-label">Cache Size</span>
+              <span class="stat-value" id="cache-size">-</span>
+            </div>
+            <div class="stat-group">
+              <span class="stat-label">Cache Updates</span>
+              <span class="stat-value small" id="cache-updates">-</span>
+            </div>
+            <div class="stat-group">
+              <span class="stat-label">Cache Hits</span>
+              <span class="stat-value small text-success" id="cache-hits">-</span>
+            </div>
+            <div class="stat-group">
+              <span class="stat-label">Cache Misses</span>
+              <span class="stat-value small text-error" id="cache-misses">-</span>
+            </div>
+          </div>
+
+          <div class="stat-group mt-3">
+            <span class="stat-label">Hit Rate</span>
+            <div class="progress-bar mt-1">
+              <div class="progress-fill" id="cache-hit-rate-bar" style="width: 0%"></div>
+            </div>
+            <span class="text-secondary mt-1" id="cache-hit-rate">-</span>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="/static/js/ws-manager.js"></script>
+  <script>
+    const wsManager = new WebSocketManager({
+      onStatusChange: (status) => {
+        DashboardUtils.updateStatusIndicator(status === 'connected');
+      }
+    });
+
+    const data = new DashboardData();
+
+    async function loadData() {
+      try {
+        const gossip = await data.getGossip();
+        updateGossip(gossip);
+      } catch (error) {
+        console.error('Failed to load gossip data:', error);
+      }
+    }
+
+    function updateGossip(gossip) {
+      const { hyparview, swim, plumtree, message_stats } = gossip;
+
+      // HyParView
+      document.getElementById('hyparview-health').innerHTML =
+        DashboardUtils.healthIndicator(hyparview.health);
+      document.getElementById('hyparview-active').textContent = hyparview.active_view_size;
+      document.getElementById('hyparview-active-max').textContent = hyparview.active_view_max;
+      document.getElementById('hyparview-passive').textContent = hyparview.passive_view_size;
+      document.getElementById('hyparview-passive-max').textContent = hyparview.passive_view_max;
+
+      const activePercent = (hyparview.active_view_size / hyparview.active_view_max) * 100;
+      const passivePercent = (hyparview.passive_view_size / hyparview.passive_view_max) * 100;
+      document.getElementById('hyparview-active-bar').style.width = `${activePercent}%`;
+      document.getElementById('hyparview-passive-bar').style.width = `${passivePercent}%`;
+
+      const peersHtml = hyparview.active_peers.length > 0
+        ? hyparview.active_peers.map(p => `<code>${DashboardUtils.shortPeerId(p)}</code>`).join(', ')
+        : 'No active peers';
+      document.getElementById('hyparview-peers').innerHTML = peersHtml;
+
+      // SWIM
+      document.getElementById('swim-health').innerHTML =
+        DashboardUtils.healthIndicator(swim.health);
+      document.getElementById('swim-alive').textContent = swim.alive_count;
+      document.getElementById('swim-suspect').textContent = swim.suspect_count;
+      document.getElementById('swim-failed').textContent = swim.failed_count;
+      document.getElementById('swim-membership').textContent = swim.membership_size;
+
+      const swimHealthPercent = swim.membership_size > 0
+        ? (swim.alive_count / swim.membership_size) * 100
+        : 0;
+      const swimBar = document.getElementById('swim-health-bar');
+      swimBar.style.width = `${swimHealthPercent}%`;
+      swimBar.className = 'progress-fill' +
+        (swimHealthPercent < 50 ? ' error' : swimHealthPercent < 80 ? ' warning' : '');
+
+      // Plumtree
+      document.getElementById('plumtree-health').innerHTML =
+        DashboardUtils.healthIndicator(plumtree.health);
+      document.getElementById('plumtree-eager').textContent = plumtree.eager_peers;
+      document.getElementById('plumtree-lazy').textContent = plumtree.lazy_peers;
+      document.getElementById('plumtree-depth').textContent =
+        plumtree.tree_depth !== null ? plumtree.tree_depth : '-';
+      document.getElementById('plumtree-broadcast').textContent =
+        DashboardUtils.formatNumber(plumtree.messages_broadcast);
+      document.getElementById('plumtree-received').textContent =
+        DashboardUtils.formatNumber(plumtree.messages_received);
+
+      // Message Statistics
+      document.getElementById('announcements-sent').textContent =
+        DashboardUtils.formatNumber(message_stats.announcements_sent);
+      document.getElementById('announcements-received').textContent =
+        DashboardUtils.formatNumber(message_stats.announcements_received);
+      document.getElementById('announcements-total').textContent =
+        DashboardUtils.formatNumber(message_stats.announcements_sent + message_stats.announcements_received);
+
+      document.getElementById('queries-sent').textContent =
+        DashboardUtils.formatNumber(message_stats.peer_queries_sent);
+      document.getElementById('queries-received').textContent =
+        DashboardUtils.formatNumber(message_stats.peer_queries_received);
+      document.getElementById('queries-total').textContent =
+        DashboardUtils.formatNumber(message_stats.peer_queries_sent + message_stats.peer_queries_received);
+
+      document.getElementById('responses-sent').textContent =
+        DashboardUtils.formatNumber(message_stats.peer_responses_sent);
+      document.getElementById('responses-received').textContent =
+        DashboardUtils.formatNumber(message_stats.peer_responses_received);
+      document.getElementById('responses-total').textContent =
+        DashboardUtils.formatNumber(message_stats.peer_responses_sent + message_stats.peer_responses_received);
+
+      // Cache Statistics
+      document.getElementById('cache-size').textContent = message_stats.cache_size;
+      document.getElementById('cache-updates').textContent =
+        DashboardUtils.formatNumber(message_stats.cache_updates);
+      document.getElementById('cache-hits').textContent =
+        DashboardUtils.formatNumber(message_stats.cache_hits);
+      document.getElementById('cache-misses').textContent =
+        DashboardUtils.formatNumber(message_stats.cache_misses);
+
+      const totalCacheOps = message_stats.cache_hits + message_stats.cache_misses;
+      const hitRate = totalCacheOps > 0
+        ? (message_stats.cache_hits / totalCacheOps) * 100
+        : 0;
+      document.getElementById('cache-hit-rate-bar').style.width = `${hitRate}%`;
+      document.getElementById('cache-hit-rate').textContent = `${hitRate.toFixed(1)}% hit rate`;
+    }
+
+    // WebSocket updates
+    wsManager.on('stats_update', () => loadData());
+
+    // Start
+    wsManager.connect();
+    loadData();
+
+    // Refresh every 10 seconds
+    setInterval(loadData, 10000);
+  </script>
+</body>
+</html>

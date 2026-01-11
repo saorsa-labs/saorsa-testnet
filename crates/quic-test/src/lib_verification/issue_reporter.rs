@@ -284,10 +284,7 @@ impl IssueReport {
             self.environment.os,
             self.environment.os_version,
             self.environment.rust_version,
-            self.environment
-                .commit_hash
-                .as_deref()
-                .unwrap_or("unknown"),
+            self.environment.commit_hash.as_deref().unwrap_or("unknown"),
             self.body,
             self.labels.join(", ")
         )
@@ -300,9 +297,9 @@ impl IssueReport {
     /// Returns an error if the gh CLI is not available or the issue
     /// creation fails.
     pub async fn create_github_issue(&self) -> Result<String, IssueCreationError> {
-        let repo = self.github_repo().ok_or_else(|| {
-            IssueCreationError::UnknownLibrary(self.library.clone())
-        })?;
+        let repo = self
+            .github_repo()
+            .ok_or_else(|| IssueCreationError::UnknownLibrary(self.library.clone()))?;
 
         // Check if gh CLI is available
         let gh_check = tokio::process::Command::new("gh")
@@ -326,15 +323,25 @@ impl IssueReport {
 
         // Create the issue
         let mut cmd = tokio::process::Command::new("gh");
-        cmd.args(["issue", "create", "--repo", repo, "--title", &self.title, "--body", &self.to_github_markdown()]);
+        cmd.args([
+            "issue",
+            "create",
+            "--repo",
+            repo,
+            "--title",
+            &self.title,
+            "--body",
+            &self.to_github_markdown(),
+        ]);
 
         for arg in &labels_arg {
             cmd.arg(arg);
         }
 
-        let output = cmd.output().await.map_err(|e| {
-            IssueCreationError::CommandFailed(e.to_string())
-        })?;
+        let output = cmd
+            .output()
+            .await
+            .map_err(|e| IssueCreationError::CommandFailed(e.to_string()))?;
 
         if output.status.success() {
             let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -351,17 +358,22 @@ impl IssueReport {
     ///
     /// Returns an error if the gh CLI is not available or the search fails.
     pub async fn check_for_duplicate(&self) -> Result<Option<String>, IssueCreationError> {
-        let repo = self.github_repo().ok_or_else(|| {
-            IssueCreationError::UnknownLibrary(self.library.clone())
-        })?;
+        let repo = self
+            .github_repo()
+            .ok_or_else(|| IssueCreationError::UnknownLibrary(self.library.clone()))?;
 
         let output = tokio::process::Command::new("gh")
             .args([
-                "issue", "list",
-                "--repo", repo,
-                "--state", "all",
-                "--search", &self.title,
-                "--json", "url,title",
+                "issue",
+                "list",
+                "--repo",
+                repo,
+                "--state",
+                "all",
+                "--search",
+                &self.title,
+                "--json",
+                "url,title",
             ])
             .output()
             .await
@@ -460,7 +472,11 @@ fn get_os_version() -> String {
                 content
                     .lines()
                     .find(|l| l.starts_with("PRETTY_NAME="))
-                    .map(|l| l.trim_start_matches("PRETTY_NAME=").trim_matches('"').to_string())
+                    .map(|l| {
+                        l.trim_start_matches("PRETTY_NAME=")
+                            .trim_matches('"')
+                            .to_string()
+                    })
             })
             .unwrap_or_else(|| "unknown".to_string())
     }
@@ -502,19 +518,13 @@ mod tests {
 
     #[test]
     fn test_github_repo_mapping() {
-        let report = IssueReport::builder("saorsa-gossip")
-            .title("test")
-            .build();
+        let report = IssueReport::builder("saorsa-gossip").title("test").build();
         assert_eq!(report.github_repo(), Some("dirvine/saorsa-gossip"));
 
-        let report = IssueReport::builder("ant-quic")
-            .title("test")
-            .build();
+        let report = IssueReport::builder("ant-quic").title("test").build();
         assert_eq!(report.github_repo(), Some("dirvine/ant-quic"));
 
-        let report = IssueReport::builder("unknown-lib")
-            .title("test")
-            .build();
+        let report = IssueReport::builder("unknown-lib").title("test").build();
         assert_eq!(report.github_repo(), None);
     }
 

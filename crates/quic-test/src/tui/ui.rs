@@ -207,11 +207,11 @@ fn draw_overview_tab(frame: &mut Frame, app: &mut App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(5),  // Proof Status (verification summary)
-            Constraint::Length(5),  // Network Stats (comprehensive counts)
-            Constraint::Length(4),  // Your Node
-            Constraint::Min(6),     // Connected Peers
-            Constraint::Length(8),  // Activity Log
+            Constraint::Length(5), // Proof Status (verification summary)
+            Constraint::Length(5), // Network Stats (comprehensive counts)
+            Constraint::Length(4), // Your Node
+            Constraint::Min(6),    // Connected Peers
+            Constraint::Length(8), // Activity Log
         ])
         .split(area);
 
@@ -260,7 +260,11 @@ fn draw_proof_status(frame: &mut Frame, app: &App, area: Rect) {
         Span::styled(conn_icon, Style::default().fg(conn_color)),
         Span::raw(" "),
         Span::styled(
-            if status.connectivity_pass { "PASS" } else { "FAIL" },
+            if status.connectivity_pass {
+                "PASS"
+            } else {
+                "FAIL"
+            },
             Style::default().fg(conn_color),
         ),
         Span::raw("  "),
@@ -290,10 +294,7 @@ fn draw_proof_status(frame: &mut Frame, app: &App, area: Rect) {
         ),
     ]);
 
-    let crdt_hash = status
-        .crdt_hash_short
-        .as_deref()
-        .unwrap_or("----");
+    let crdt_hash = status.crdt_hash_short.as_deref().unwrap_or("----");
 
     let line2 = Line::from(vec![
         Span::raw("  CRDT:         "),
@@ -364,18 +365,24 @@ fn draw_proof_help_overlay(frame: &mut Frame) {
     let help_text = vec![
         Line::from(Span::styled(
             "PROOF VERIFICATION SYSTEM",
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
         Line::from(Span::styled(
             "What We're Testing",
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         )),
         Line::from("The proof system verifies network connectivity and protocol health."),
         Line::from(""),
         Line::from(Span::styled(
             "CONNECTIVITY (always passes with relay fallback)",
-            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
         )),
         Line::from("  ANY connection between peers is a success:"),
         Line::from("    - Direct connection works? PASS"),
@@ -385,7 +392,9 @@ fn draw_proof_help_overlay(frame: &mut Frame) {
         Line::from(""),
         Line::from(Span::styled(
             "CONNECTIVITY MATRIX (Tab 3) - Connection Paths",
-            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
         )),
         Line::from("  Shows connection test results for each peer:"),
         Line::from(""),
@@ -395,7 +404,9 @@ fn draw_proof_help_overlay(frame: &mut Frame) {
         Line::from(""),
         Line::from(Span::styled(
             "Connection Methods",
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         )),
         Line::from("  Direct (D): No NAT traversal - public IP or same network"),
         Line::from("  NAT (N):    Hole-punched through NAT with coordinator help"),
@@ -403,7 +414,9 @@ fn draw_proof_help_overlay(frame: &mut Frame) {
         Line::from(""),
         Line::from(Span::styled(
             "GOSSIP (epidemic protocol stats)",
-            Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
         )),
         Line::from("  HyParView: Overlay membership (active/passive peer counts)"),
         Line::from("  SWIM:      Liveness detection (alive/suspect/dead counts)"),
@@ -412,7 +425,9 @@ fn draw_proof_help_overlay(frame: &mut Frame) {
         Line::from(""),
         Line::from(Span::styled(
             "CRDT (convergence check)",
-            Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Blue)
+                .add_modifier(Modifier::BOLD),
         )),
         Line::from("  Shows node count participating in distributed state sync."),
         Line::from("  Hash displays state identifier when available."),

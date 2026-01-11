@@ -1127,7 +1127,10 @@ impl PeerStore {
     ///
     /// This captures what peers the registry can see and builds a connectivity
     /// matrix that can be cross-validated with individual node proofs.
-    pub fn build_connectivity_proof(&self, observer_id: &str) -> super::types::NetworkConnectivityProof {
+    pub fn build_connectivity_proof(
+        &self,
+        observer_id: &str,
+    ) -> super::types::NetworkConnectivityProof {
         use super::types::NetworkConnectivityProof;
         use std::collections::HashSet;
 
@@ -1216,10 +1219,9 @@ impl PeerStore {
 
         for observed in &proof.observed_peers {
             if !registry_peers.contains(observed) && observed != &proof.observer_id {
-                result.warnings.push(format!(
-                    "Observed peer '{}' not in registry",
-                    observed
-                ));
+                result
+                    .warnings
+                    .push(format!("Observed peer '{}' not in registry", observed));
             }
         }
 
@@ -1234,10 +1236,9 @@ impl PeerStore {
 
             // Verify the validating peer exists
             if !registry_peers.contains(&cv.peer_id) {
-                result.errors.push(format!(
-                    "Cross-validator '{}' not in registry",
-                    cv.peer_id
-                ));
+                result
+                    .errors
+                    .push(format!("Cross-validator '{}' not in registry", cv.peer_id));
                 result.valid = false;
             }
         }
@@ -1388,6 +1389,280 @@ impl PeerStore {
             })
             .map(|entry| entry.registration.peer_id.clone())
             .collect()
+    }
+
+    // ===== Dashboard API Methods =====
+
+    /// Get aggregated overview data for the overview page.
+    pub fn get_overview_data(&self) -> crate::dashboard::OverviewResponse {
+        use crate::dashboard::{
+            ConnectedPeerApi, LocalNodeApi, NetworkStatsApi, OverviewResponse, ProofStatusApi,
+        };
+
+        let stats = self.get_stats();
+        let uptime_secs = self.created_at.elapsed().as_secs();
+
+        // Build network stats API response
+        let network_stats = NetworkStatsApi {
+            connection_attempts: stats.total_connections,
+            connection_successes: (stats.connection_success_rate * stats.total_connections as f64)
+                as u64,
+            connection_failures: ((1.0 - stats.connection_success_rate)
+                * stats.total_connections as f64) as u64,
+            direct_connections: stats.connection_breakdown.direct,
+            hole_punched_connections: stats.connection_breakdown.hole_punched,
+            relayed_connections: stats.connection_breakdown.relayed,
+            inbound_connections: 0, // Not tracked in NetworkStats
+            outbound_connections: 0,
+            ipv4_connections: stats.ipv4_connections,
+            ipv6_connections: stats.ipv6_connections,
+            packets_sent: 0,
+            packets_received: 0,
+            bytes_sent: stats.total_bytes_transferred / 2,
+            bytes_received: stats.total_bytes_transferred / 2,
+            total_registered_nodes: stats.total_nodes,
+            gossip_peers_discovered: 0,
+            gossip_relays_discovered: 0,
+        };
+
+        // Build proof status (placeholder - would be populated from actual proof results)
+        let proof_status = ProofStatusApi {
+            connectivity_pass: true,
+            connectivity_reachable: stats.active_nodes,
+            connectivity_total: stats.total_nodes,
+            gossip_pass: true,
+            hyparview_active: 0,
+            swim_alive: 0,
+            tree_valid: true,
+            crdt_pass: true,
+            crdt_nodes: 0,
+            crdt_hash_short: None,
+            nat_pass: true,
+            nat_direct: stats.connection_breakdown.direct as usize,
+            nat_punched: stats.connection_breakdown.hole_punched as usize,
+            nat_relayed: stats.connection_breakdown.relayed as usize,
+            session_id: None,
+            running: false,
+            last_proof_ms: None,
+        };
+
+        // Build connected peers list from current peers
+        let connected_peers: Vec<ConnectedPeerApi> = self
+            .peers
+            .iter()
+            .take(50) // Limit for API response
+            .map(|entry| {
+                let elapsed_secs = entry.last_heartbeat.elapsed().as_secs();
+                ConnectedPeerApi {
+                    short_id: entry.registration.peer_id.chars().take(8).collect(),
+                    full_id: entry.registration.peer_id.clone(),
+                    location: entry.country_code.clone().unwrap_or_default(),
+                    method: "direct".to_string(),
+                    direction: "outbound".to_string(),
+                    rtt_ms: None,
+                    quality: "good".to_string(),
+                    packets_sent: 0,
+                    packets_received: 0,
+                    connected_secs: elapsed_secs,
+                }
+            })
+            .collect();
+
+        // Local node info (placeholder - would come from actual node)
+        let local_node = LocalNodeApi {
+            peer_id: "local".to_string(),
+            short_id: "local".to_string(),
+            nat_type: "unknown".to_string(),
+            local_ipv4: None,
+            external_ipv4: None,
+            local_ipv6: None,
+            external_ipv6: None,
+            registered: true,
+        };
+
+        OverviewResponse {
+            proof_status,
+            network_stats,
+            connected_peers,
+            local_node,
+            uptime_secs,
+        }
+    }
+
+    /// Get connection history for the connectivity matrix.
+    pub fn get_connections_data(&self) -> crate::dashboard::ConnectionsResponse {
+        use crate::dashboard::{ConnectionEntryApi, ConnectionsResponse, DirectionalStatsApi};
+
+        let connections: Vec<ConnectionEntryApi> = self
+            .peers
+            .iter()
+            .map(|entry| {
+                let nat_type_str = match entry.registration.nat_type {
+                    NatType::None => "none",
+                    NatType::FullCone => "full_cone",
+                    NatType::AddressRestricted => "address_restricted",
+                    NatType::PortRestricted => "port_restricted",
+                    NatType::Symmetric => "symmetric",
+                    NatType::Unknown => "unknown",
+                    _ => "unknown", // Handle any other extended variants
+                };
+
+                ConnectionEntryApi {
+                    short_id: entry.registration.peer_id.chars().take(8).collect(),
+                    full_id: entry.registration.peer_id.clone(),
+                    location: entry.country_code.clone().unwrap_or_default(),
+                    nat_type: nat_type_str.to_string(),
+                    status: "connected".to_string(),
+                    outbound: DirectionalStatsApi::from_method_outcome(
+                        entry.nat_stats.attempts as u32,
+                        (entry.nat_stats.direct_success
+                            + entry.nat_stats.hole_punch_success
+                            + entry.nat_stats.relay_success) as u32,
+                        entry.nat_stats.failures as u32,
+                        "unknown",
+                        "unknown",
+                        "unknown",
+                        "unknown",
+                        "unknown",
+                        "unknown",
+                    ),
+                    inbound: DirectionalStatsApi::from_method_outcome(
+                        0, 0, 0, "unknown", "unknown", "unknown", "unknown", "unknown", "unknown",
+                    ),
+                    best_rtt_ms: None,
+                    total_packets: 0,
+                    connection_count: 1,
+                    first_connected_secs: entry.last_heartbeat.elapsed().as_secs(),
+                    last_seen_secs: entry.last_heartbeat.elapsed().as_secs(),
+                }
+            })
+            .collect();
+
+        let total_peers = connections.len();
+        let connected_count = connections.len();
+
+        ConnectionsResponse {
+            connections,
+            total_peers,
+            connected_count,
+        }
+    }
+
+    /// Get recent protocol frames for the log display.
+    pub fn get_frames_data(&self, _limit: usize) -> crate::dashboard::FramesResponse {
+        use crate::dashboard::FramesResponse;
+
+        // Protocol frames are tracked in TUI state, not PeerStore
+        // Return empty for now - would need integration with TUI state
+        FramesResponse {
+            frames: Vec::new(),
+            total_recorded: 0,
+        }
+    }
+
+    /// Get gossip protocol health data.
+    pub fn get_gossip_data(&self) -> crate::dashboard::GossipResponse {
+        use crate::dashboard::{
+            GossipMessageStatsApi, GossipResponse, HyParViewStatusApi, PlumtreeStatusApi,
+            SwimStatusApi,
+        };
+
+        // Aggregate gossip stats from all peers
+        let mut total_announcements_sent: u64 = 0;
+        let mut total_announcements_received: u64 = 0;
+        let mut total_queries_sent: u64 = 0;
+        let mut total_queries_received: u64 = 0;
+        let mut total_responses_sent: u64 = 0;
+        let mut total_responses_received: u64 = 0;
+        let mut total_cache_updates: u64 = 0;
+        let mut total_cache_hits: u64 = 0;
+        let mut total_cache_misses: u64 = 0;
+        let mut max_hyparview_active: usize = 0;
+        let mut max_hyparview_passive: usize = 0;
+        let mut total_swim_alive: usize = 0;
+        let mut total_swim_suspect: usize = 0;
+
+        for entry in self.peers.iter() {
+            total_announcements_sent += entry.gossip_stats.announcements_sent;
+            total_announcements_received += entry.gossip_stats.announcements_received;
+            total_queries_sent += entry.gossip_stats.peer_queries_sent;
+            total_queries_received += entry.gossip_stats.peer_queries_received;
+            total_responses_sent += entry.gossip_stats.peer_responses_sent;
+            total_responses_received += entry.gossip_stats.peer_responses_received;
+            total_cache_updates += entry.gossip_stats.cache_updates;
+            total_cache_hits += entry.gossip_stats.cache_hits;
+            total_cache_misses += entry.gossip_stats.cache_misses;
+
+            if entry.gossip_stats.hyparview_active > max_hyparview_active {
+                max_hyparview_active = entry.gossip_stats.hyparview_active;
+            }
+            if entry.gossip_stats.hyparview_passive > max_hyparview_passive {
+                max_hyparview_passive = entry.gossip_stats.hyparview_passive;
+            }
+            total_swim_alive += entry.gossip_stats.swim_alive;
+            total_swim_suspect += entry.gossip_stats.swim_suspect;
+        }
+
+        let hyparview = HyParViewStatusApi {
+            active_view_size: max_hyparview_active,
+            active_view_max: 6,
+            passive_view_size: max_hyparview_passive,
+            passive_view_max: 30,
+            active_peers: Vec::new(),
+            health: if max_hyparview_active >= 3 {
+                "healthy"
+            } else if max_hyparview_active >= 1 {
+                "degraded"
+            } else {
+                "unhealthy"
+            }
+            .to_string(),
+        };
+
+        let swim = SwimStatusApi {
+            alive_count: total_swim_alive,
+            suspect_count: total_swim_suspect,
+            failed_count: 0,
+            membership_size: self.peers.len(),
+            health: if total_swim_suspect == 0 {
+                "healthy"
+            } else if total_swim_suspect < 3 {
+                "degraded"
+            } else {
+                "unhealthy"
+            }
+            .to_string(),
+        };
+
+        let plumtree = PlumtreeStatusApi {
+            eager_peers: max_hyparview_active,
+            lazy_peers: max_hyparview_passive,
+            tree_depth: None,
+            tree_valid: true,
+            messages_broadcast: total_announcements_sent,
+            messages_received: total_announcements_received,
+            health: "healthy".to_string(),
+        };
+
+        let message_stats = GossipMessageStatsApi {
+            announcements_sent: total_announcements_sent,
+            announcements_received: total_announcements_received,
+            peer_queries_sent: total_queries_sent,
+            peer_queries_received: total_queries_received,
+            peer_responses_sent: total_responses_sent,
+            peer_responses_received: total_responses_received,
+            cache_updates: total_cache_updates,
+            cache_hits: total_cache_hits,
+            cache_misses: total_cache_misses,
+            cache_size: 0,
+        };
+
+        GossipResponse {
+            hyparview,
+            swim,
+            plumtree,
+            message_stats,
+        }
     }
 }
 

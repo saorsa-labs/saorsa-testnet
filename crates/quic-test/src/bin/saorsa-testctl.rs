@@ -1,12 +1,13 @@
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use saorsa_quic_test::{
     harness::{
         AgentCapabilities, AgentClient, AgentInfo, AttemptResult, CollectionResult,
         FALLBACK_SOCKET_ADDR, GetResultsRequest, GetResultsResponse, HandshakeRequest,
-        HandshakeResponse, HealthCheckResponse, LocalAgent, MixedOrchestrator, RemoteAgent,
-        ResultFormat, RunStatusResponse, RunSummary, ScenarioSpec, StartRunRequest,
-        StartRunResponse, StartRunResult, StatusPollResult, StopRunResponse,
+        HandshakeResponse, HealthCheckResponse, LocalAgent, MixedOrchestrator,
+        MonitorHealthResponse, ProbeResponse, ProofsResponse, RemoteAgent, ResultFormat,
+        RunStatusResponse, RunSummary, ScenarioSpec, StartRunRequest, StartRunResponse,
+        StartRunResult, StatusPollResult, StopRunResponse,
     },
     orchestrator::NatTestMatrix,
 };
@@ -148,6 +149,75 @@ enum Commands {
         #[arg(long, default_value = "300")]
         timeout_secs: u64,
     },
+
+    /// Run long-duration network monitoring (24-hour by default)
+    Monitor {
+        /// Agent URLs to monitor
+        #[arg(long)]
+        agents: Vec<String>,
+
+        /// Duration of monitoring in hours
+        #[arg(long, default_value = "24")]
+        duration_hours: u64,
+
+        /// Interval between checks in minutes
+        #[arg(long, default_value = "60")]
+        interval_mins: u64,
+
+        /// Output directory for monitoring results
+        #[arg(long)]
+        output_dir: Option<PathBuf>,
+
+        /// Collect logs when failures are detected
+        #[arg(long)]
+        collect_logs_on_failure: bool,
+    },
+
+    /// One-time health check of all nodes
+    HealthCheck {
+        /// Agent URLs to check
+        #[arg(long)]
+        agents: Vec<String>,
+
+        /// Output format
+        #[arg(long, default_value = "table")]
+        format: OutputFormat,
+
+        /// Output file (stdout if not specified)
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+
+    /// Collect proofs from all nodes
+    CollectProofs {
+        /// Agent URLs to collect from
+        #[arg(long)]
+        agents: Vec<String>,
+
+        /// Output file for proofs
+        #[arg(long)]
+        output: Option<PathBuf>,
+
+        /// Only collect connectivity proofs
+        #[arg(long)]
+        connectivity_only: bool,
+
+        /// Only collect gossip proofs
+        #[arg(long)]
+        gossip_only: bool,
+
+        /// Only collect CRDT proofs
+        #[arg(long)]
+        crdt_only: bool,
+    },
+}
+
+/// Output format for health check command
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum OutputFormat {
+    Table,
+    Json,
+    Jsonl,
 }
 
 struct Orchestrator {
@@ -976,7 +1046,437 @@ async fn main() -> Result<()> {
                 info!("Results written to {:?}", output_path);
             }
         }
+
+        Commands::Monitor {
+            agents,
+            duration_hours,
+            interval_mins,
+            output_dir,
+            collect_logs_on_failure,
+        } => {
+            if agents.is_empty() {
+                anyhow::bail!("At least one agent URL required (--agents)");
+            }
+
+            let output_path = output_dir.unwrap_or_else(|| PathBuf::from("./monitor-results"));
+            std::fs::create_dir_all(&output_path)?;
+
+            let total_intervals = (duration_hours * 60) / interval_mins;
+            let interval_duration = Duration::from_secs(interval_mins * 60);
+
+            info!(
+                "Starting {} hour monitoring ({} intervals, {} min each)",
+                duration_hours, total_intervals, interval_mins
+            );
+            info!("Results will be saved to {:?}", output_path);
+
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .build()?;
+
+            let mut interval_count: u64 = 0;
+            let mut total_failures = 0;
+            let start_time = std::time::Instant::now();
+
+            while interval_count < total_intervals {
+                interval_count += 1;
+                let interval_start = std::time::Instant::now();
+                let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
+
+                info!(
+                    "=== Interval {}/{} ({}) ===",
+                    interval_count, total_intervals, timestamp
+                );
+
+                let mut interval_results = Vec::new();
+                let mut interval_failures = 0;
+
+                // Phase 1: Probe all agents
+                for url in &agents {
+                    let probe_url = format!("{}/api/probe", url.trim_end_matches('/'));
+                    let probe_start = std::time::Instant::now();
+
+                    let probe_result = match client.get(&probe_url).send().await {
+                        Ok(resp) if resp.status().is_success() => {
+                            match resp.json::<ProbeResponse>().await {
+                                Ok(probe) => {
+                                    let latency_ms = probe_start.elapsed().as_millis() as u64;
+                                    info!("  {} - OK ({}ms)", probe.agent_id, latency_ms);
+                                    Some((probe.agent_id.clone(), true, latency_ms, None))
+                                }
+                                Err(e) => {
+                                    error!("  {} - Parse error: {}", url, e);
+                                    interval_failures += 1;
+                                    Some((
+                                        url.clone(),
+                                        false,
+                                        0,
+                                        Some(format!("Parse error: {}", e)),
+                                    ))
+                                }
+                            }
+                        }
+                        Ok(resp) => {
+                            error!("  {} - HTTP {}", url, resp.status());
+                            interval_failures += 1;
+                            Some((
+                                url.clone(),
+                                false,
+                                0,
+                                Some(format!("HTTP {}", resp.status())),
+                            ))
+                        }
+                        Err(e) => {
+                            error!("  {} - Unreachable: {}", url, e);
+                            interval_failures += 1;
+                            Some((url.clone(), false, 0, Some(e.to_string())))
+                        }
+                    };
+
+                    if let Some(result) = probe_result {
+                        interval_results.push(result);
+                    }
+                }
+
+                // Phase 2: Get health details from reachable agents
+                let mut health_results = Vec::new();
+                for url in &agents {
+                    let health_url = format!("{}/api/health", url.trim_end_matches('/'));
+                    if let Ok(resp) = client.get(&health_url).send().await {
+                        if resp.status().is_success() {
+                            if let Ok(health) = resp.json::<MonitorHealthResponse>().await {
+                                health_results.push(health);
+                            }
+                        }
+                    }
+                }
+
+                // Phase 3: Collect logs if there were failures
+                if collect_logs_on_failure && interval_failures > 0 {
+                    info!(
+                        "  Collecting logs from {} agents due to failures",
+                        agents.len()
+                    );
+                    for url in &agents {
+                        let logs_url = format!("{}/api/logs?limit=50", url.trim_end_matches('/'));
+                        if let Ok(resp) = client.get(&logs_url).send().await {
+                            if resp.status().is_success() {
+                                if let Ok(logs) = resp.text().await {
+                                    let log_file = output_path.join(format!(
+                                        "logs_{}_{}.json",
+                                        url.replace([':', '/', '.'], "_"),
+                                        timestamp
+                                    ));
+                                    let _ = std::fs::write(&log_file, logs);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Save interval report
+                let interval_report = serde_json::json!({
+                    "interval": interval_count,
+                    "timestamp": timestamp,
+                    "elapsed_hours": start_time.elapsed().as_secs() as f64 / 3600.0,
+                    "agents_checked": agents.len(),
+                    "agents_healthy": agents.len() - interval_failures,
+                    "agents_failed": interval_failures,
+                    "probe_results": interval_results,
+                    "health_results": health_results,
+                });
+
+                let report_file = output_path.join(format!("interval_{}.json", timestamp));
+                std::fs::write(
+                    &report_file,
+                    serde_json::to_string_pretty(&interval_report)?,
+                )?;
+
+                total_failures += interval_failures;
+                let elapsed = interval_start.elapsed();
+                let remaining = if elapsed < interval_duration {
+                    interval_duration - elapsed
+                } else {
+                    Duration::ZERO
+                };
+
+                if remaining > Duration::ZERO && interval_count < total_intervals {
+                    info!("  Sleeping for {:?} until next interval", remaining);
+                    tokio::time::sleep(remaining).await;
+                }
+            }
+
+            // Generate final summary
+            let summary = serde_json::json!({
+                "monitoring_duration_hours": duration_hours,
+                "total_intervals": total_intervals,
+                "agents_monitored": agents.len(),
+                "total_failures": total_failures,
+                "average_failures_per_interval": total_failures as f64 / total_intervals as f64,
+                "success_rate": 1.0 - (total_failures as f64 / (total_intervals as f64 * agents.len() as f64)),
+            });
+
+            let summary_file = output_path.join("summary.json");
+            std::fs::write(&summary_file, serde_json::to_string_pretty(&summary)?)?;
+
+            info!("\n=== Monitoring Complete ===");
+            info!("Duration: {} hours", duration_hours);
+            info!("Total intervals: {}", total_intervals);
+            info!("Total failures: {}", total_failures);
+            info!("Results saved to {:?}", output_path);
+        }
+
+        Commands::HealthCheck {
+            agents,
+            format,
+            output,
+        } => {
+            if agents.is_empty() {
+                anyhow::bail!("At least one agent URL required (--agents)");
+            }
+
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .build()?;
+
+            let mut results: Vec<MonitorHealthResponse> = Vec::new();
+            let mut failures: Vec<(String, String)> = Vec::new();
+
+            for url in &agents {
+                let health_url = format!("{}/api/health", url.trim_end_matches('/'));
+                match client.get(&health_url).send().await {
+                    Ok(resp) if resp.status().is_success() => {
+                        match resp.json::<MonitorHealthResponse>().await {
+                            Ok(health) => results.push(health),
+                            Err(e) => failures.push((url.clone(), format!("Parse error: {}", e))),
+                        }
+                    }
+                    Ok(resp) => failures.push((url.clone(), format!("HTTP {}", resp.status()))),
+                    Err(e) => failures.push((url.clone(), e.to_string())),
+                }
+            }
+
+            let output_str = match format {
+                OutputFormat::Table => {
+                    let mut table = String::new();
+                    table.push_str("Agent ID          | Status | Uptime  | Conn% | Proofs\n");
+                    table.push_str("------------------|--------|---------|-------|--------\n");
+                    for r in &results {
+                        let proof_status = format!(
+                            "C:{} G:{} D:{}",
+                            if r.proof_summary.connectivity_pass {
+                                "OK"
+                            } else {
+                                "FAIL"
+                            },
+                            if r.proof_summary.gossip_pass {
+                                "OK"
+                            } else {
+                                "FAIL"
+                            },
+                            if r.proof_summary.crdt_pass {
+                                "OK"
+                            } else {
+                                "FAIL"
+                            }
+                        );
+                        table.push_str(&format!(
+                            "{:17} | {:6} | {:7} | {:5.1} | {}\n",
+                            &r.agent_id[..r.agent_id.len().min(17)],
+                            if r.healthy { "OK" } else { "FAIL" },
+                            format_duration(r.uptime_secs),
+                            r.connectivity_summary.reachability_percent,
+                            proof_status
+                        ));
+                    }
+                    for (url, err) in &failures {
+                        table.push_str(&format!("{:17} | UNREACHABLE | {}\n", url, err));
+                    }
+                    table
+                }
+                OutputFormat::Json => serde_json::to_string_pretty(&serde_json::json!({
+                    "healthy": results,
+                    "failures": failures,
+                }))?,
+                OutputFormat::Jsonl => {
+                    let mut lines = Vec::new();
+                    for r in &results {
+                        lines.push(serde_json::to_string(&r)?);
+                    }
+                    lines.join("\n")
+                }
+            };
+
+            if let Some(output_path) = output {
+                std::fs::write(&output_path, &output_str)?;
+                info!("Health check results written to {:?}", output_path);
+            } else {
+                println!("{}", output_str);
+            }
+
+            if !failures.is_empty() {
+                warn!("{} agents unreachable", failures.len());
+                std::process::exit(1);
+            }
+        }
+
+        Commands::CollectProofs {
+            agents,
+            output,
+            connectivity_only,
+            gossip_only,
+            crdt_only,
+        } => {
+            if agents.is_empty() {
+                anyhow::bail!("At least one agent URL required (--agents)");
+            }
+
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(60))
+                .build()?;
+
+            let mut all_proofs: Vec<ProofsResponse> = Vec::new();
+            let mut failures: Vec<(String, String)> = Vec::new();
+
+            for url in &agents {
+                // Determine which endpoint to use
+                let proofs_url = if connectivity_only {
+                    format!("{}/api/proofs/connectivity", url.trim_end_matches('/'))
+                } else if gossip_only {
+                    format!("{}/api/proofs/gossip", url.trim_end_matches('/'))
+                } else if crdt_only {
+                    format!("{}/api/proofs/crdt", url.trim_end_matches('/'))
+                } else {
+                    format!("{}/api/proofs", url.trim_end_matches('/'))
+                };
+
+                match client.get(&proofs_url).send().await {
+                    Ok(resp) if resp.status().is_success() => {
+                        if connectivity_only || gossip_only || crdt_only {
+                            // Individual proof endpoints return different types
+                            // Wrap them in a ProofsResponse for consistency
+                            let agent_id = url.clone();
+                            let timestamp_ms = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_millis() as u64)
+                                .unwrap_or(0);
+
+                            if connectivity_only {
+                                if let Ok(proof) = resp
+                                    .json::<saorsa_quic_test::harness::ConnectivityProofData>()
+                                    .await
+                                {
+                                    all_proofs.push(ProofsResponse {
+                                        agent_id,
+                                        timestamp_ms,
+                                        connectivity: Some(proof),
+                                        gossip: None,
+                                        crdt: None,
+                                    });
+                                }
+                            } else if gossip_only {
+                                if let Ok(proof) = resp
+                                    .json::<saorsa_quic_test::harness::GossipProofData>()
+                                    .await
+                                {
+                                    all_proofs.push(ProofsResponse {
+                                        agent_id,
+                                        timestamp_ms,
+                                        connectivity: None,
+                                        gossip: Some(proof),
+                                        crdt: None,
+                                    });
+                                }
+                            } else if crdt_only {
+                                if let Ok(proof) = resp
+                                    .json::<saorsa_quic_test::harness::CrdtProofData>()
+                                    .await
+                                {
+                                    all_proofs.push(ProofsResponse {
+                                        agent_id,
+                                        timestamp_ms,
+                                        connectivity: None,
+                                        gossip: None,
+                                        crdt: Some(proof),
+                                    });
+                                }
+                            }
+                        } else {
+                            match resp.json::<ProofsResponse>().await {
+                                Ok(proofs) => {
+                                    info!("Collected proofs from {}", proofs.agent_id);
+                                    all_proofs.push(proofs);
+                                }
+                                Err(e) => {
+                                    failures.push((url.clone(), format!("Parse error: {}", e)));
+                                }
+                            }
+                        }
+                    }
+                    Ok(resp) => failures.push((url.clone(), format!("HTTP {}", resp.status()))),
+                    Err(e) => failures.push((url.clone(), e.to_string())),
+                }
+            }
+
+            let output_str = serde_json::to_string_pretty(&serde_json::json!({
+                "proofs": all_proofs,
+                "failures": failures,
+                "collected_at": chrono::Utc::now().to_rfc3339(),
+            }))?;
+
+            if let Some(output_path) = output {
+                std::fs::write(&output_path, &output_str)?;
+                info!("Proofs written to {:?}", output_path);
+            } else {
+                println!("{}", output_str);
+            }
+
+            // Verify all nodes see each other
+            if !connectivity_only && !gossip_only && !crdt_only {
+                let mut all_pass = true;
+                for proof in &all_proofs {
+                    if let Some(ref conn) = proof.connectivity {
+                        if !conn.pass {
+                            warn!("Agent {} failed connectivity proof", proof.agent_id);
+                            all_pass = false;
+                        }
+                    }
+                    if let Some(ref gossip) = proof.gossip {
+                        if !gossip.pass {
+                            warn!("Agent {} failed gossip proof", proof.agent_id);
+                            all_pass = false;
+                        }
+                    }
+                    if let Some(ref crdt) = proof.crdt {
+                        if !crdt.pass {
+                            warn!("Agent {} failed CRDT proof", proof.agent_id);
+                            all_pass = false;
+                        }
+                    }
+                }
+
+                if all_pass {
+                    info!("All {} agents passed all proofs", all_proofs.len());
+                } else {
+                    warn!("Some agents failed proofs - check output for details");
+                    std::process::exit(1);
+                }
+            }
+        }
     }
 
     Ok(())
+}
+
+/// Format duration in human-readable form
+fn format_duration(secs: u64) -> String {
+    if secs < 60 {
+        format!("{}s", secs)
+    } else if secs < 3600 {
+        format!("{}m", secs / 60)
+    } else if secs < 86400 {
+        format!("{}h", secs / 3600)
+    } else {
+        format!("{}d", secs / 86400)
+    }
 }

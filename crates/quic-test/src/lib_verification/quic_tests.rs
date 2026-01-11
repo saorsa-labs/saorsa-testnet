@@ -28,7 +28,9 @@
 //! - `node.peer_id()` - Returns stable PeerId
 //! - Should be consistent across reconnects
 
-use super::{issue_reporter::IssueReport, LibraryVerificationResult, TestResult, VerificationConfig};
+use super::{
+    LibraryVerificationResult, TestResult, VerificationConfig, issue_reporter::IssueReport,
+};
 use std::time::Instant;
 use tracing::info;
 
