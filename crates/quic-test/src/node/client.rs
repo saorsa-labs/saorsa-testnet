@@ -376,6 +376,7 @@ pub struct TestNode {
     disconnection_times: Arc<RwLock<HashMap<String, Instant>>>,
     pending_outbound: Arc<RwLock<HashSet<String>>>,
     inbound_connections: Arc<AtomicU64>,
+    outbound_connections: Arc<AtomicU64>,
     relay_state: Arc<RwLock<RelayState>>,
     gossip_integration: Arc<GossipIntegration>,
     gossip_event_rx: Arc<RwLock<mpsc::Receiver<GossipEvent>>>,
@@ -625,6 +626,9 @@ impl TestNode {
         // If we're behind NAT and receive inbound connections, hole-punching works!
         let inbound_connections: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
 
+        // Counter for outbound connections - avoids lock contention in heartbeat
+        let outbound_connections: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
+
         let nat_stats: Arc<RwLock<NatStats>> = Arc::new(RwLock::new(NatStats::default()));
 
         // Create relay state for NAT traversal fallback (before event handler spawn)
@@ -672,6 +676,7 @@ impl TestNode {
         let disconnection_times_for_events = Arc::clone(&disconnection_times);
         let pending_outbound_for_events = Arc::clone(&pending_outbound);
         let inbound_connections_for_events = Arc::clone(&inbound_connections);
+        let outbound_connections_for_events = Arc::clone(&outbound_connections);
         let geo_provider_for_events = Arc::clone(&geo_provider);
         let relay_state_for_events = Arc::clone(&relay_state);
         let listen_addresses_for_events = listen_addresses.clone();
@@ -983,6 +988,12 @@ impl TestNode {
                                 };
 
                                 peers.insert(peer_hex.clone(), tracked);
+
+                                // Increment outbound counter for lock-free heartbeat access
+                                if !is_inbound {
+                                    outbound_connections_for_events.fetch_add(1, Ordering::SeqCst);
+                                }
+
                                 debug!(
                                     "Added peer {} to connected_peers immediately (direction: {:?})",
                                     &peer_hex[..8.min(peer_hex.len())],
@@ -1331,6 +1342,7 @@ impl TestNode {
             disconnection_times,
             pending_outbound,
             inbound_connections,
+            outbound_connections,
             relay_state,
             gossip_integration,
             gossip_event_rx: Arc::new(RwLock::new(gossip_event_rx)),
@@ -3800,8 +3812,9 @@ impl TestNode {
         let bytes_sent = Arc::clone(&self.total_bytes_sent);
         let bytes_received = Arc::clone(&self.total_bytes_received);
         let interval = self.config.heartbeat_interval;
-        // Clone inbound_connections counter for heartbeat reporting
+        // Clone connection counters for lock-free heartbeat reporting
         let inbound_connections = Arc::clone(&self.inbound_connections);
+        let outbound_connections = Arc::clone(&self.outbound_connections);
         // Clone gossip integration for gossip stats reporting
         let gossip_integration = Arc::clone(&self.gossip_integration);
         // Clone epidemic gossip for real saorsa-gossip stats
@@ -3851,16 +3864,11 @@ impl TestNode {
                     .unwrap_or_else(|| quic_peer_id.clone());
 
                 // CRITICAL: Never skip heartbeats due to lock contention!
-                // Use try_read() with fallback to cached/default values.
-                // A heartbeat with stale data is better than no heartbeat at all.
+                // Use atomic counters for lock-free access to connection counts.
+                // This avoids the race condition where try_read() fails and returns 0.
 
-                // Try to get peer count - use cached/default if lock contended
-                let peer_count = if let Ok(guard) = connected_peers.try_read() {
-                    guard.len()
-                } else {
-                    debug!("Heartbeat #{}: connected_peers lock contended, using cached count", heartbeat_count);
-                    0 // Will be updated from inbound_connections anyway
-                };
+                // Get outbound peer count from atomic counter (lock-free)
+                let peer_count = outbound_connections.load(Ordering::Relaxed) as usize;
 
                 let ext_addrs = if let Ok(guard) = external_addresses.try_read() {
                     guard.clone()
@@ -4263,6 +4271,7 @@ impl TestNode {
         let gossip_integration = Arc::clone(&self.gossip_integration);
         let relay_state = Arc::clone(&self.relay_state);
         let epidemic_gossip = Arc::clone(&self.epidemic_gossip);
+        let outbound_connections = Arc::clone(&self.outbound_connections);
         #[allow(unused_variables)]
         let disconnection_times = Arc::clone(&self.disconnection_times);
 
@@ -4419,6 +4428,7 @@ impl TestNode {
                     let gossip_integration = Arc::clone(&gossip_integration);
                     let relay_state = Arc::clone(&relay_state);
                     let epidemic_gossip = Arc::clone(&epidemic_gossip);
+                    let outbound_connections = Arc::clone(&outbound_connections);
 
                     let fut = async move {
                         let peer_id_short = &candidate.peer_id[..8.min(candidate.peer_id.len())];
@@ -4556,8 +4566,14 @@ impl TestNode {
                             };
 
                             let peer_for_tui = tracked.to_connected_peer();
+                            let was_new_peer = !peers.contains_key(&candidate.peer_id);
                             peers.insert(candidate.peer_id.clone(), tracked);
                             drop(peers);
+
+                            // Only increment if this is a NEW outbound peer (not already tracked)
+                            if was_new_peer {
+                                outbound_connections.fetch_add(1, Ordering::SeqCst);
+                            }
 
                             info!(
                                 "COMPREHENSIVE test SUCCESS to {} via {:?} (matrix: {})",
@@ -4687,8 +4703,14 @@ impl TestNode {
                                 };
 
                                 let peer_for_tui = tracked.to_connected_peer();
+                                let was_new_peer = !peers.contains_key(&candidate.peer_id);
                                 peers.insert(candidate.peer_id.clone(), tracked);
                                 drop(peers);
+
+                                // Only increment if this is a NEW outbound peer (not already tracked)
+                                if was_new_peer {
+                                    outbound_connections.fetch_add(1, Ordering::SeqCst);
+                                }
 
                                 info!(
                                     "Direct connection failed but RELAY available for {} (matrix: {})",
@@ -4885,6 +4907,7 @@ impl TestNode {
     fn spawn_health_check_loop(&self) -> tokio::task::JoinHandle<()> {
         let shutdown = Arc::clone(&self.shutdown);
         let connected_peers = Arc::clone(&self.connected_peers);
+        let outbound_connections = Arc::clone(&self.outbound_connections);
         let event_tx = self.event_tx.clone();
 
         tokio::spawn(async move {
@@ -4958,11 +4981,25 @@ impl TestNode {
                 // Remove unhealthy/rotated peers
                 if !peers_to_remove.is_empty() {
                     let mut peers = connected_peers.write().await;
+                    let mut outbound_removed = 0u64;
                     for peer_id in &peers_to_remove {
-                        peers.remove(peer_id);
+                        // Check direction before removing to decrement correct counter
+                        if let Some(removed_peer) = peers.remove(peer_id) {
+                            if matches!(
+                                removed_peer.direction,
+                                ConnectionDirection::Outbound
+                            ) {
+                                outbound_removed += 1;
+                            }
+                        }
 
                         // Notify TUI
                         let _ = event_tx.try_send(TuiEvent::RemovePeer(peer_id.clone()));
+                    }
+
+                    // Decrement outbound counter for removed outbound peers
+                    if outbound_removed > 0 {
+                        outbound_connections.fetch_sub(outbound_removed, Ordering::SeqCst);
                     }
 
                     let removed_count = peers_to_remove.len();

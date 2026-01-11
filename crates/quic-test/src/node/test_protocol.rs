@@ -1379,6 +1379,33 @@ pub mod connectivity_test {
                 ConnectivityMethod::RelayedIpv6 => "Relay IPv6",
             }
         }
+
+        /// Create from registry ConnectionMethod and IP version flag.
+        pub fn from_registry_method(
+            method: crate::registry::ConnectionMethod,
+            is_ipv6: bool,
+        ) -> Self {
+            match (method, is_ipv6) {
+                (crate::registry::ConnectionMethod::Direct, false) => Self::DirectIpv4,
+                (crate::registry::ConnectionMethod::Direct, true) => Self::DirectIpv6,
+                (crate::registry::ConnectionMethod::HolePunched, false) => Self::NatTraversalIpv4,
+                (crate::registry::ConnectionMethod::HolePunched, true) => Self::NatTraversalIpv6,
+                (crate::registry::ConnectionMethod::Relayed, false) => Self::RelayedIpv4,
+                (crate::registry::ConnectionMethod::Relayed, true) => Self::RelayedIpv6,
+            }
+        }
+
+        /// Convert to registry ConnectionMethod and IP version flag.
+        pub fn to_registry_method(&self) -> (crate::registry::ConnectionMethod, bool) {
+            match self {
+                Self::DirectIpv4 => (crate::registry::ConnectionMethod::Direct, false),
+                Self::DirectIpv6 => (crate::registry::ConnectionMethod::Direct, true),
+                Self::NatTraversalIpv4 => (crate::registry::ConnectionMethod::HolePunched, false),
+                Self::NatTraversalIpv6 => (crate::registry::ConnectionMethod::HolePunched, true),
+                Self::RelayedIpv4 => (crate::registry::ConnectionMethod::Relayed, false),
+                Self::RelayedIpv6 => (crate::registry::ConnectionMethod::Relayed, true),
+            }
+        }
     }
 
     /// Test phase in the connectivity test flow.

@@ -16,12 +16,13 @@
 //! 5. Verify all states match
 //! 6. Verify conflict resolution was semantically correct
 
+use crate::epidemic_gossip::CrdtStats;
 use crate::registry::{
     CrdtConvergenceProof, CrdtOperation, CrdtType, ProofType, SignedAttestation,
 };
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::time::{Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 /// Configuration for CRDT verification.
 #[derive(Debug, Clone)]
@@ -519,6 +520,227 @@ pub fn compute_state_hash(data: &[u8]) -> [u8; 32] {
     hash
 }
 
+/// Live CRDT state captured from a gossip node.
+///
+/// This represents the actual state captured from a running gossip instance,
+/// not just an externally passed hash.
+#[derive(Debug, Clone)]
+pub struct LiveCrdtState {
+    /// Node identifier.
+    pub node_id: String,
+    /// The CRDT statistics at capture time.
+    pub stats: CrdtStats,
+    /// Computed hash of the serialized state.
+    pub state_hash: [u8; 32],
+    /// When this state was captured.
+    pub captured_at: Instant,
+    /// System time for proof generation.
+    pub system_time: SystemTime,
+}
+
+impl LiveCrdtState {
+    /// Capture live state from CRDT statistics.
+    ///
+    /// This computes a deterministic hash of the CRDT state that can be
+    /// compared across nodes to verify convergence.
+    pub fn capture(node_id: String, stats: CrdtStats) -> Self {
+        let state_hash = compute_crdt_state_hash(&stats);
+        Self {
+            node_id,
+            stats,
+            state_hash,
+            captured_at: Instant::now(),
+            system_time: SystemTime::now(),
+        }
+    }
+
+    /// Check if this state is fresh (captured recently).
+    pub fn is_fresh(&self, max_age: Duration) -> bool {
+        self.captured_at.elapsed() < max_age
+    }
+}
+
+/// Compute a deterministic hash from CRDT statistics.
+///
+/// This serializes the CRDT state in a deterministic format and computes
+/// a cryptographic hash that can be compared across nodes.
+pub fn compute_crdt_state_hash(stats: &CrdtStats) -> [u8; 32] {
+    // Serialize in a deterministic format:
+    // Format: "entries:{entries}|merges:{merges}|vclock_len:{len}|last_sync:{age}"
+    let state_str = format!(
+        "entries:{}|merges:{}|vclock_len:{}|last_sync:{}",
+        stats.entries, stats.merges, stats.vector_clock_len, stats.last_sync_age_secs
+    );
+    compute_state_hash(state_str.as_bytes())
+}
+
+/// Capture and verify CRDT convergence across multiple live nodes.
+///
+/// This is the primary entry point for verifying CRDT convergence in production.
+/// It captures live state from each node and verifies they have converged.
+#[derive(Debug)]
+pub struct LiveConvergenceVerifier {
+    /// Captured states from each node.
+    captured_states: HashMap<String, LiveCrdtState>,
+    /// Maximum allowed state age for freshness check.
+    max_state_age: Duration,
+    /// Convergence result (computed lazily).
+    convergence_result: Option<LiveConvergenceResult>,
+}
+
+/// Result of live convergence verification.
+#[derive(Debug, Clone)]
+pub struct LiveConvergenceResult {
+    /// Whether all nodes have converged to the same state.
+    pub converged: bool,
+    /// The common state hash (if converged).
+    pub common_hash: Option<[u8; 32]>,
+    /// Number of nodes checked.
+    pub node_count: usize,
+    /// Nodes that have divergent state (if not converged).
+    pub divergent_nodes: Vec<String>,
+    /// Summary of each node's state.
+    pub node_summaries: HashMap<String, CrdtStateSummary>,
+    /// When the verification was performed.
+    pub verified_at: SystemTime,
+}
+
+/// Summary of a single node's CRDT state.
+#[derive(Debug, Clone)]
+pub struct CrdtStateSummary {
+    /// State hash.
+    pub hash: [u8; 32],
+    /// Number of CRDT entries.
+    pub entries: usize,
+    /// Number of merge operations.
+    pub merges: u64,
+    /// Vector clock length.
+    pub vector_clock_len: usize,
+    /// Whether the state is considered fresh.
+    pub is_fresh: bool,
+}
+
+impl LiveConvergenceVerifier {
+    /// Create a new live convergence verifier.
+    pub fn new() -> Self {
+        Self::with_max_age(Duration::from_secs(30))
+    }
+
+    /// Create a new verifier with custom max state age.
+    pub fn with_max_age(max_state_age: Duration) -> Self {
+        Self {
+            captured_states: HashMap::new(),
+            max_state_age,
+            convergence_result: None,
+        }
+    }
+
+    /// Capture state from a node's CRDT statistics.
+    ///
+    /// This should be called for each node in the test network.
+    pub fn capture_state(&mut self, node_id: String, stats: CrdtStats) {
+        let live_state = LiveCrdtState::capture(node_id.clone(), stats);
+        self.captured_states.insert(node_id, live_state);
+        // Invalidate cached result
+        self.convergence_result = None;
+    }
+
+    /// Check if convergence has been achieved.
+    ///
+    /// Returns true if all captured states have the same hash.
+    pub fn check_convergence(&mut self) -> bool {
+        let result = self.verify();
+        result.converged
+    }
+
+    /// Perform full verification and return detailed result.
+    pub fn verify(&mut self) -> LiveConvergenceResult {
+        if let Some(ref result) = self.convergence_result {
+            return result.clone();
+        }
+
+        let mut node_summaries = HashMap::new();
+        let mut hash_counts: HashMap<[u8; 32], Vec<String>> = HashMap::new();
+
+        for (node_id, state) in &self.captured_states {
+            let is_fresh = state.is_fresh(self.max_state_age);
+
+            let summary = CrdtStateSummary {
+                hash: state.state_hash,
+                entries: state.stats.entries,
+                merges: state.stats.merges,
+                vector_clock_len: state.stats.vector_clock_len,
+                is_fresh,
+            };
+            node_summaries.insert(node_id.clone(), summary);
+
+            hash_counts
+                .entry(state.state_hash)
+                .or_default()
+                .push(node_id.clone());
+        }
+
+        let node_count = self.captured_states.len();
+
+        // Check convergence: all nodes have same hash
+        let (converged, common_hash, divergent_nodes) = if hash_counts.len() == 1 {
+            let hash = *hash_counts.keys().next().unwrap();
+            (true, Some(hash), Vec::new())
+        } else if hash_counts.is_empty() {
+            (true, None, Vec::new())
+        } else {
+            // Find majority hash
+            let majority = hash_counts
+                .iter()
+                .max_by_key(|(_, nodes)| nodes.len())
+                .map(|(h, _)| *h);
+
+            // Collect divergent nodes (not in majority)
+            let divergent: Vec<String> = hash_counts
+                .iter()
+                .filter(|(h, _)| majority.map_or(true, |m| *h != &m))
+                .flat_map(|(_, nodes)| nodes.clone())
+                .collect();
+
+            (false, majority, divergent)
+        };
+
+        let result = LiveConvergenceResult {
+            converged,
+            common_hash,
+            node_count,
+            divergent_nodes,
+            node_summaries,
+            verified_at: SystemTime::now(),
+        };
+
+        self.convergence_result = Some(result.clone());
+        result
+    }
+
+    /// Get the number of nodes with captured state.
+    pub fn node_count(&self) -> usize {
+        self.captured_states.len()
+    }
+
+    /// Get all captured states.
+    pub fn states(&self) -> &HashMap<String, LiveCrdtState> {
+        &self.captured_states
+    }
+
+    /// Reset for a new verification run.
+    pub fn reset(&mut self) {
+        self.captured_states.clear();
+        self.convergence_result = None;
+    }
+}
+
+impl Default for LiveConvergenceVerifier {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -631,5 +853,134 @@ mod tests {
         let proof = verifier.generate_proof("observer".to_string());
         assert_eq!(proof.crdt_type, CrdtType::PeerCache);
         assert!(proof.convergence_achieved);
+    }
+
+    #[test]
+    fn test_live_crdt_state_capture() {
+        let stats = CrdtStats {
+            entries: 10,
+            merges: 5,
+            vector_clock_len: 3,
+            last_sync_age_secs: 1,
+        };
+
+        let live_state = LiveCrdtState::capture("node1".to_string(), stats.clone());
+
+        assert_eq!(live_state.node_id, "node1");
+        assert_eq!(live_state.stats.entries, 10);
+        assert_ne!(live_state.state_hash, [0u8; 32]);
+        assert!(live_state.is_fresh(Duration::from_secs(60)));
+    }
+
+    #[test]
+    fn test_crdt_state_hash_determinism() {
+        let stats1 = CrdtStats {
+            entries: 10,
+            merges: 5,
+            vector_clock_len: 3,
+            last_sync_age_secs: 1,
+        };
+
+        let stats2 = CrdtStats {
+            entries: 10,
+            merges: 5,
+            vector_clock_len: 3,
+            last_sync_age_secs: 1,
+        };
+
+        let hash1 = compute_crdt_state_hash(&stats1);
+        let hash2 = compute_crdt_state_hash(&stats2);
+
+        // Same stats should produce same hash
+        assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_crdt_state_hash_changes_with_state() {
+        let stats1 = CrdtStats {
+            entries: 10,
+            merges: 5,
+            vector_clock_len: 3,
+            last_sync_age_secs: 1,
+        };
+
+        let stats2 = CrdtStats {
+            entries: 11, // Different entry count
+            merges: 5,
+            vector_clock_len: 3,
+            last_sync_age_secs: 1,
+        };
+
+        let hash1 = compute_crdt_state_hash(&stats1);
+        let hash2 = compute_crdt_state_hash(&stats2);
+
+        // Different stats should produce different hash
+        assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_live_convergence_verifier_converged() {
+        let mut verifier = LiveConvergenceVerifier::new();
+
+        let stats = CrdtStats {
+            entries: 10,
+            merges: 5,
+            vector_clock_len: 3,
+            last_sync_age_secs: 0,
+        };
+
+        // All nodes have same state
+        verifier.capture_state("node1".to_string(), stats.clone());
+        verifier.capture_state("node2".to_string(), stats.clone());
+        verifier.capture_state("node3".to_string(), stats.clone());
+
+        assert!(verifier.check_convergence());
+
+        let result = verifier.verify();
+        assert!(result.converged);
+        assert_eq!(result.node_count, 3);
+        assert!(result.divergent_nodes.is_empty());
+    }
+
+    #[test]
+    fn test_live_convergence_verifier_diverged() {
+        let mut verifier = LiveConvergenceVerifier::new();
+
+        let stats1 = CrdtStats {
+            entries: 10,
+            merges: 5,
+            vector_clock_len: 3,
+            last_sync_age_secs: 0,
+        };
+
+        let stats2 = CrdtStats {
+            entries: 11, // Different!
+            merges: 5,
+            vector_clock_len: 3,
+            last_sync_age_secs: 0,
+        };
+
+        verifier.capture_state("node1".to_string(), stats1.clone());
+        verifier.capture_state("node2".to_string(), stats1.clone());
+        verifier.capture_state("node3".to_string(), stats2); // Divergent
+
+        assert!(!verifier.check_convergence());
+
+        let result = verifier.verify();
+        assert!(!result.converged);
+        assert_eq!(result.divergent_nodes.len(), 1);
+        assert!(result.divergent_nodes.contains(&"node3".to_string()));
+    }
+
+    #[test]
+    fn test_live_convergence_verifier_reset() {
+        let mut verifier = LiveConvergenceVerifier::new();
+
+        let stats = CrdtStats::default();
+        verifier.capture_state("node1".to_string(), stats);
+        assert_eq!(verifier.node_count(), 1);
+
+        verifier.reset();
+        assert_eq!(verifier.node_count(), 0);
     }
 }

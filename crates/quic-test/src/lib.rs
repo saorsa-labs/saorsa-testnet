@@ -66,6 +66,7 @@ pub mod gossip_tests;
 pub mod gossip_verification;
 pub mod harness;
 pub mod history;
+pub mod lib_verification;
 pub mod node;
 pub mod orchestrator;
 pub mod peer_discovery;
@@ -140,4 +141,9 @@ pub use debug_automation::{
 
 pub use proof_orchestrator::{
     ProofOrchestrator, ProofOrchestratorConfig, OrchestratorReport, StepResult,
+};
+
+pub use lib_verification::{
+    LibraryVerificationResult, TestResult as LibTestResult, TestStatus as LibTestStatus,
+    VerificationConfig, print_summary as print_verification_summary, verify_all_libraries,
 };

@@ -8,6 +8,17 @@ use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
+/// Format a duration in seconds as a short human-readable string (e.g., "30s", "5m", "2h").
+pub fn format_elapsed_short(secs: u64) -> String {
+    if secs < 60 {
+        format!("{}s", secs)
+    } else if secs < 3600 {
+        format!("{}m", secs / 60)
+    } else {
+        format!("{}h", secs / 3600)
+    }
+}
+
 /// Historical connection record for tracking peers we've connected to.
 #[derive(Debug, Clone)]
 pub struct ConnectionHistoryEntry {
@@ -362,14 +373,7 @@ impl ConnectionHistoryEntry {
 
     /// Get time since last seen as a formatted string.
     pub fn time_since_seen(&self) -> String {
-        let elapsed = self.last_seen.elapsed();
-        if elapsed.as_secs() < 60 {
-            format!("{}s", elapsed.as_secs())
-        } else if elapsed.as_secs() < 3600 {
-            format!("{}m", elapsed.as_secs() / 60)
-        } else {
-            format!("{}h", elapsed.as_secs() / 3600)
-        }
+        format_elapsed_short(self.last_seen.elapsed().as_secs())
     }
 
     /// Get best RTT as a formatted string.
@@ -1496,9 +1500,7 @@ impl ProofStatus {
     /// Get formatted time since last proof.
     pub fn time_since_last_str(&self) -> String {
         match self.seconds_since_last() {
-            Some(secs) if secs < 60 => format!("{}s ago", secs),
-            Some(secs) if secs < 3600 => format!("{}m ago", secs / 60),
-            Some(secs) => format!("{}h ago", secs / 3600),
+            Some(secs) => format!("{} ago", format_elapsed_short(secs)),
             None => "never".to_string(),
         }
     }

@@ -87,6 +87,8 @@ pub struct App {
     pub gossip_stats: Option<crate::registry::NodeGossipStats>,
     /// Proof verification status (auto-run every 60s)
     pub proof_status: ProofStatus,
+    /// Show proof help overlay (press P to toggle)
+    pub show_proof_help: bool,
 }
 
 impl Default for App {
@@ -126,12 +128,18 @@ impl App {
             active_tab: Tab::default(),
             gossip_stats: None,
             proof_status: ProofStatus::new(),
+            show_proof_help: false,
         }
     }
 
     /// Update proof verification status.
     pub fn update_proof_status(&mut self, status: ProofStatus) {
         self.proof_status = status;
+    }
+
+    /// Toggle the proof help overlay.
+    pub fn toggle_proof_help(&mut self) {
+        self.show_proof_help = !self.show_proof_help;
     }
 
     /// Cycle to the next tab.
@@ -497,24 +505,7 @@ impl App {
         method: TestConnectivityMethod,
         success: bool,
     ) {
-        let (mapped_method, is_ipv6) = match method {
-            TestConnectivityMethod::DirectIpv4 => {
-                (crate::registry::ConnectionMethod::Direct, false)
-            }
-            TestConnectivityMethod::DirectIpv6 => (crate::registry::ConnectionMethod::Direct, true),
-            TestConnectivityMethod::NatTraversalIpv4 => {
-                (crate::registry::ConnectionMethod::HolePunched, false)
-            }
-            TestConnectivityMethod::NatTraversalIpv6 => {
-                (crate::registry::ConnectionMethod::HolePunched, true)
-            }
-            TestConnectivityMethod::RelayedIpv4 => {
-                (crate::registry::ConnectionMethod::Relayed, false)
-            }
-            TestConnectivityMethod::RelayedIpv6 => {
-                (crate::registry::ConnectionMethod::Relayed, true)
-            }
-        };
+        let (mapped_method, is_ipv6) = method.to_registry_method();
 
         let entry = self
             .connection_history
@@ -556,44 +547,35 @@ impl App {
         self.connectivity_test.countdown_complete()
     }
 
-    pub fn scroll_connections_up(&mut self) {
-        let i = match self.connections_table_state.selected() {
-            Some(i) => i.saturating_sub(1),
-            None => 0,
+    /// Core scroll logic: scrolls by `amount` (negative = up, positive = down).
+    fn scroll_connections_by(&mut self, amount: isize) {
+        let len = self.connection_history.len();
+        if len == 0 {
+            return;
+        }
+        let current = self.connections_table_state.selected().unwrap_or(0);
+        let new_idx = if amount < 0 {
+            current.saturating_sub(amount.unsigned_abs())
+        } else {
+            (current + amount as usize).min(len - 1)
         };
-        self.connections_table_state.select(Some(i));
+        self.connections_table_state.select(Some(new_idx));
+    }
+
+    pub fn scroll_connections_up(&mut self) {
+        self.scroll_connections_by(-1);
     }
 
     pub fn scroll_connections_down(&mut self) {
-        let len = self.connection_history.len();
-        if len == 0 {
-            return;
-        }
-        let i = match self.connections_table_state.selected() {
-            Some(i) => (i + 1).min(len - 1),
-            None => 0,
-        };
-        self.connections_table_state.select(Some(i));
+        self.scroll_connections_by(1);
     }
 
     pub fn scroll_connections_page_up(&mut self) {
-        let i = match self.connections_table_state.selected() {
-            Some(i) => i.saturating_sub(10),
-            None => 0,
-        };
-        self.connections_table_state.select(Some(i));
+        self.scroll_connections_by(-10);
     }
 
     pub fn scroll_connections_page_down(&mut self) {
-        let len = self.connection_history.len();
-        if len == 0 {
-            return;
-        }
-        let i = match self.connections_table_state.selected() {
-            Some(i) => (i + 10).min(len - 1),
-            None => 0,
-        };
-        self.connections_table_state.select(Some(i));
+        self.scroll_connections_by(10);
     }
 }
 
@@ -613,6 +595,7 @@ pub enum InputEvent {
     TabGossipHealth,
     TabConnectivityMatrix,
     TabProtocolLog,
+    ToggleProofHelp,
     Unknown,
 }
 
@@ -636,6 +619,7 @@ impl InputEvent {
             KeyCode::Char('2') | KeyCode::Char('g') | KeyCode::Char('G') => Self::TabGossipHealth,
             KeyCode::Char('3') | KeyCode::Char('c') | KeyCode::Char('C') => Self::TabConnectivityMatrix,
             KeyCode::Char('4') | KeyCode::Char('l') | KeyCode::Char('L') => Self::TabProtocolLog,
+            KeyCode::Char('p') | KeyCode::Char('P') => Self::ToggleProofHelp,
             KeyCode::Esc => Self::Quit,
             _ => Self::Unknown,
         }

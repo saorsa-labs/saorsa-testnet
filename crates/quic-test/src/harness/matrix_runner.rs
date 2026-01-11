@@ -42,6 +42,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::Duration;
+use tracing::info;
 
 /// Request to start a matrix test run on an agent.
 ///
@@ -894,6 +895,75 @@ impl MatrixTestCase {
             }
             None => CooldownStatus::Unknown,
         };
+    }
+
+    /// Wait for cooldown to expire before running test.
+    ///
+    /// This method enforces the NAT mapping cooldown period by sleeping
+    /// if necessary. It should be called before starting any NAT traversal
+    /// test to ensure fresh NAT mapping state.
+    ///
+    /// # Returns
+    ///
+    /// The duration waited, or `Duration::ZERO` if no wait was needed.
+    pub async fn wait_for_cooldown(&self) -> Duration {
+        if let Some(remaining) = self.remaining_cooldown() {
+            info!(
+                test_case_id = %self.id,
+                remaining_secs = remaining.as_secs(),
+                "NAT cooloff: waiting for cooldown before test"
+            );
+            tokio::time::sleep(remaining).await;
+            remaining
+        } else {
+            Duration::ZERO
+        }
+    }
+
+    /// Check if this test involves NAT traversal requiring cooldown tracking.
+    ///
+    /// Returns true if any of the techniques involve NAT hole punching or
+    /// coordinated traversal, which require fresh NAT mapping state.
+    #[must_use]
+    pub fn involves_nat_traversal(&self) -> bool {
+        self.techniques.iter().any(|t| {
+            matches!(
+                t,
+                ConnectionTechnique::HolePunch | ConnectionTechnique::HolePunchCoordinated
+            )
+        })
+    }
+
+    /// Mark the test as started, recording contact time for future cooldown.
+    ///
+    /// Call this when the test begins to track the contact time for
+    /// subsequent cooldown calculations.
+    pub fn mark_test_started(&mut self) {
+        let now = Utc::now();
+        self.agent_a.last_peer_contact = Some(now);
+        self.agent_b.last_peer_contact = Some(now);
+        self.status = TestCaseStatus::Running;
+    }
+
+    /// Mark the test as completed and update cooldown status.
+    ///
+    /// Call this after the test completes to set up the cooldown period
+    /// for the next test involving these peers.
+    ///
+    /// # Arguments
+    ///
+    /// * `result` - The test result to record
+    /// * `cooldown_duration` - How long to wait before next NAT traversal test
+    pub fn mark_test_completed(&mut self, result: TestCaseResult, cooldown_duration: Duration) {
+        self.status = TestCaseStatus::Completed(result);
+
+        // If this involved NAT traversal, set up cooldown for next test
+        if self.involves_nat_traversal() {
+            let cooldown_chrono = chrono::Duration::from_std(cooldown_duration)
+                .unwrap_or(chrono::Duration::seconds(30));
+            let wait_until = Utc::now() + cooldown_chrono;
+            self.cooldown_status = CooldownStatus::WaitingUntil(wait_until);
+        }
     }
 }
 

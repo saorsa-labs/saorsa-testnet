@@ -22,7 +22,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table, Tabs},
+    widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, Tabs, Wrap},
 };
 
 /// Traffic light colors for connection methods
@@ -45,6 +45,17 @@ fn method_emoji(method: &ConnectionMethod) -> &'static str {
         ConnectionMethod::Direct => "🟢",
         ConnectionMethod::HolePunched => "🟠",
         ConnectionMethod::Relayed => "🔴",
+    }
+}
+
+/// Get proof status indicator (icon and color) based on pass/fail and whether test has run.
+fn proof_indicator(pass: bool, has_run: bool) -> (&'static str, Color) {
+    if pass {
+        ("✓", Color::Green)
+    } else if has_run {
+        ("✗", Color::Red)
+    } else {
+        ("·", Color::DarkGray)
     }
 }
 
@@ -148,6 +159,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     draw_messages(frame, app, main_chunks[2]);
     draw_footer(frame, app, main_chunks[3]);
+
+    // Draw proof help overlay if toggled
+    if app.show_proof_help {
+        draw_proof_help_overlay(frame);
+    }
 }
 
 /// Draw the tab bar for navigation.
@@ -210,13 +226,13 @@ fn draw_overview_tab(frame: &mut Frame, app: &mut App, area: Rect) {
 fn draw_proof_status(frame: &mut Frame, app: &App, area: Rect) {
     let status = &app.proof_status;
 
-    // Title shows running/complete state
+    // Title shows running/complete state with [P] help hint
     let title = if status.running {
-        " PROOF STATUS (running...) "
+        " PROOF STATUS (running...) [P] Help "
     } else if status.last_proof_time.is_some() {
-        " PROOF STATUS "
+        " PROOF STATUS [P] Help "
     } else {
-        " PROOF STATUS (pending first run) "
+        " PROOF STATUS (pending) [P] Help "
     };
 
     let border_color = if status.all_passed() {
@@ -233,37 +249,11 @@ fn draw_proof_status(frame: &mut Frame, app: &App, area: Rect) {
         .border_style(Style::default().fg(border_color));
 
     // Build status lines
-    let (conn_icon, conn_color) = if status.connectivity_pass {
-        ("✓", Color::Green)
-    } else if status.last_proof_time.is_some() {
-        ("✗", Color::Red)
-    } else {
-        ("·", Color::DarkGray)
-    };
-
-    let (gossip_icon, gossip_color) = if status.gossip_pass {
-        ("✓", Color::Green)
-    } else if status.last_proof_time.is_some() {
-        ("✗", Color::Red)
-    } else {
-        ("·", Color::DarkGray)
-    };
-
-    let (crdt_icon, crdt_color) = if status.crdt_pass {
-        ("✓", Color::Green)
-    } else if status.last_proof_time.is_some() {
-        ("✗", Color::Red)
-    } else {
-        ("·", Color::DarkGray)
-    };
-
-    let (nat_icon, nat_color) = if status.nat_pass {
-        ("✓", Color::Green)
-    } else if status.last_proof_time.is_some() {
-        ("✗", Color::Red)
-    } else {
-        ("·", Color::DarkGray)
-    };
+    let has_run = status.last_proof_time.is_some();
+    let (conn_icon, conn_color) = proof_indicator(status.connectivity_pass, has_run);
+    let (gossip_icon, gossip_color) = proof_indicator(status.gossip_pass, has_run);
+    let (crdt_icon, crdt_color) = proof_indicator(status.crdt_pass, has_run);
+    let (nat_icon, nat_color) = proof_indicator(status.nat_pass, has_run);
 
     let line1 = Line::from(vec![
         Span::raw("  Connectivity: "),
@@ -354,6 +344,102 @@ fn draw_proof_status(frame: &mut Frame, app: &App, area: Rect) {
 
     let paragraph = Paragraph::new(vec![line1, line2, line3]).block(block);
     frame.render_widget(paragraph, area);
+}
+
+/// Draw the proof help overlay explaining the verification system.
+fn draw_proof_help_overlay(frame: &mut Frame) {
+    let area = frame.area();
+
+    // Center the overlay, taking up most of the screen
+    let overlay_width = area.width.saturating_sub(8).min(100);
+    let overlay_height = area.height.saturating_sub(6).min(45);
+    let overlay_x = (area.width.saturating_sub(overlay_width)) / 2;
+    let overlay_y = (area.height.saturating_sub(overlay_height)) / 2;
+
+    let overlay_area = Rect::new(overlay_x, overlay_y, overlay_width, overlay_height);
+
+    // Clear background
+    frame.render_widget(Clear, overlay_area);
+
+    let help_text = vec![
+        Line::from(Span::styled(
+            "PROOF VERIFICATION SYSTEM",
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "What We're Testing",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        )),
+        Line::from("The proof system verifies network connectivity and protocol health."),
+        Line::from(""),
+        Line::from(Span::styled(
+            "CONNECTIVITY (always passes with relay fallback)",
+            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+        )),
+        Line::from("  ANY connection between peers is a success:"),
+        Line::from("    - Direct connection works? PASS"),
+        Line::from("    - NAT traversal works? PASS"),
+        Line::from("    - Relay fallback works? PASS (always available)"),
+        Line::from("  The mesh % shows how many direct paths exist (informational)."),
+        Line::from(""),
+        Line::from(Span::styled(
+            "CONNECTIVITY MATRIX (Tab 3) - Connection Paths",
+            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+        )),
+        Line::from("  Shows connection test results for each peer:"),
+        Line::from(""),
+        Line::from("  Columns: D4=Direct IPv4  D6=Direct IPv6  NAT  Relay"),
+        Line::from(""),
+        Line::from("  Rows show: Outbound (you initiated the connection)"),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Connection Methods",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        )),
+        Line::from("  Direct (D): No NAT traversal - public IP or same network"),
+        Line::from("  NAT (N):    Hole-punched through NAT with coordinator help"),
+        Line::from("  Relay (R):  Fallback via intermediary when direct/NAT fails"),
+        Line::from(""),
+        Line::from(Span::styled(
+            "GOSSIP (epidemic protocol stats)",
+            Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+        )),
+        Line::from("  HyParView: Overlay membership (active/passive peer counts)"),
+        Line::from("  SWIM:      Liveness detection (alive/suspect/dead counts)"),
+        Line::from("  Tree:      Plumtree broadcast (message delivery stats)"),
+        Line::from("  Note: These are heuristic checks based on observed activity."),
+        Line::from(""),
+        Line::from(Span::styled(
+            "CRDT (convergence check)",
+            Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD),
+        )),
+        Line::from("  Shows node count participating in distributed state sync."),
+        Line::from("  Hash displays state identifier when available."),
+        Line::from(""),
+        Line::from(Span::styled(
+            "NAT (connection method counts)",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        )),
+        Line::from("  D=Direct  P=Punched (NAT traversal)  R=Relayed"),
+        Line::from("  Counts how many current connections use each method."),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Press [P] or [Esc] to close",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ];
+
+    let block = Block::default()
+        .title(" PROOF VERIFICATION HELP ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Yellow));
+
+    let paragraph = Paragraph::new(help_text)
+        .block(block)
+        .wrap(Wrap { trim: false });
+
+    frame.render_widget(paragraph, overlay_area);
 }
 
 fn draw_network_stats(frame: &mut Frame, app: &App, area: Rect) {

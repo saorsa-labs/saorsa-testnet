@@ -374,7 +374,12 @@ pub async fn run_tui(
                 if key.kind == KeyEventKind::Press {
                     match InputEvent::from_key(key.code) {
                         InputEvent::Quit => {
-                            app.quit();
+                            // If help overlay is open, close it instead of quitting
+                            if app.show_proof_help {
+                                app.show_proof_help = false;
+                            } else {
+                                app.quit();
+                            }
                         }
                         InputEvent::ToggleAutoConnect => {
                             app.auto_connecting = !app.auto_connecting;
@@ -414,6 +419,9 @@ pub async fn run_tui(
                         }
                         InputEvent::TabProtocolLog => {
                             app.active_tab = app::Tab::ProtocolLog;
+                        }
+                        InputEvent::ToggleProofHelp => {
+                            app.toggle_proof_help();
                         }
                         InputEvent::Unknown => {}
                     }
@@ -529,26 +537,7 @@ fn handle_tui_event(app: &mut App, event: TuiEvent) {
             });
 
             // Record method outcome for connectivity matrix auto-population
-            let test_method = match (peer.method, is_ipv6) {
-                (crate::registry::ConnectionMethod::Direct, false) => {
-                    TestConnectivityMethod::DirectIpv4
-                }
-                (crate::registry::ConnectionMethod::Direct, true) => {
-                    TestConnectivityMethod::DirectIpv6
-                }
-                (crate::registry::ConnectionMethod::HolePunched, false) => {
-                    TestConnectivityMethod::NatTraversalIpv4
-                }
-                (crate::registry::ConnectionMethod::HolePunched, true) => {
-                    TestConnectivityMethod::NatTraversalIpv6
-                }
-                (crate::registry::ConnectionMethod::Relayed, false) => {
-                    TestConnectivityMethod::RelayedIpv4
-                }
-                (crate::registry::ConnectionMethod::Relayed, true) => {
-                    TestConnectivityMethod::RelayedIpv6
-                }
-            };
+            let test_method = TestConnectivityMethod::from_registry_method(peer.method, is_ipv6);
 
             // Record based on connection direction
             match peer.direction {
