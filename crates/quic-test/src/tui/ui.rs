@@ -802,7 +802,8 @@ fn draw_peers(frame: &mut Frame, app: &mut App, area: Rect) {
         Style::default().fg(Color::DarkGray),
     );
     let history_total = app.connection_history.len();
-    let history_live = app.history_connected_count();
+    // Use actual connected_peers count (real-time) instead of history status (stale)
+    let history_live = app.connected_peers.len();
     // Legend: D=Direct, N=NAT traversal, R=Relay | ✓=ok, ✗=fail, ·=untested
     let title = Line::from(vec![
         Span::raw(format!(
@@ -860,22 +861,33 @@ fn draw_peers(frame: &mut Frame, app: &mut App, area: Rect) {
         .history_sorted()
         .iter()
         .map(|entry| {
-            let status_color = match entry.status {
-                crate::tui::types::ConnectionStatus::Connected => Color::Green,
-                crate::tui::types::ConnectionStatus::Disconnected => Color::DarkGray,
-                crate::tui::types::ConnectionStatus::Failed => Color::Red,
-                crate::tui::types::ConnectionStatus::Coordinating => Color::Cyan,
+            // Check actual connection state (real-time) instead of stale history status
+            let is_actually_connected = app.connected_peers.contains_key(&entry.full_id);
+
+            let (status_color, status_emoji) = if is_actually_connected {
+                (Color::Green, "●")
+            } else {
+                match entry.status {
+                    crate::tui::types::ConnectionStatus::Connected => (Color::Yellow, "◐"), // History says connected but actually not
+                    crate::tui::types::ConnectionStatus::Disconnected => (Color::DarkGray, "○"),
+                    crate::tui::types::ConnectionStatus::Failed => (Color::Red, "✗"),
+                    crate::tui::types::ConnectionStatus::Coordinating => (Color::Cyan, "◌"),
+                }
             };
 
-            let row_color = match entry.status {
-                crate::tui::types::ConnectionStatus::Connected => entry
+            let row_color = if is_actually_connected {
+                entry
                     .method
                     .as_ref()
                     .map(method_color)
-                    .unwrap_or(Color::Green),
-                crate::tui::types::ConnectionStatus::Disconnected => Color::DarkGray,
-                crate::tui::types::ConnectionStatus::Failed => Color::Red,
-                crate::tui::types::ConnectionStatus::Coordinating => Color::Cyan,
+                    .unwrap_or(Color::Green)
+            } else {
+                match entry.status {
+                    crate::tui::types::ConnectionStatus::Connected => Color::Yellow,
+                    crate::tui::types::ConnectionStatus::Disconnected => Color::DarkGray,
+                    crate::tui::types::ConnectionStatus::Failed => Color::Red,
+                    crate::tui::types::ConnectionStatus::Coordinating => Color::Cyan,
+                }
             };
 
             // Display location with country flag if available
@@ -891,7 +903,7 @@ fn draw_peers(frame: &mut Frame, app: &mut App, area: Rect) {
             let inbound_summary = entry.inbound.summary_compact();
 
             Row::new(vec![
-                Cell::from(entry.status.emoji()).style(Style::default().fg(status_color)),
+                Cell::from(status_emoji).style(Style::default().fg(status_color)),
                 Cell::from(entry.short_id.clone()).style(Style::default().fg(row_color)),
                 Cell::from(location),
                 Cell::from(outbound_summary),
@@ -1763,11 +1775,18 @@ fn draw_connectivity_matrix_tab(frame: &mut Frame, app: &App, area: Rect) {
         .history_sorted()
         .iter()
         .map(|entry| {
-            let status_color = match entry.status {
-                crate::tui::types::ConnectionStatus::Connected => Color::Green,
-                crate::tui::types::ConnectionStatus::Disconnected => Color::DarkGray,
-                crate::tui::types::ConnectionStatus::Failed => Color::Red,
-                crate::tui::types::ConnectionStatus::Coordinating => Color::Cyan,
+            // Check actual connection state (real-time) instead of stale history status
+            let is_actually_connected = app.connected_peers.contains_key(&entry.full_id);
+
+            let (status_color, status_emoji) = if is_actually_connected {
+                (Color::Green, "●")
+            } else {
+                match entry.status {
+                    crate::tui::types::ConnectionStatus::Connected => (Color::Yellow, "◐"),
+                    crate::tui::types::ConnectionStatus::Disconnected => (Color::DarkGray, "○"),
+                    crate::tui::types::ConnectionStatus::Failed => (Color::Red, "✗"),
+                    crate::tui::types::ConnectionStatus::Coordinating => (Color::Cyan, "◌"),
+                }
             };
 
             // NAT type color based on hole-punch difficulty (1=easy/green, 5=hard/red)
@@ -1792,7 +1811,7 @@ fn draw_connectivity_matrix_tab(frame: &mut Frame, app: &App, area: Rect) {
             Row::new(vec![
                 Cell::from(entry.short_id.clone()).style(Style::default().fg(status_color)),
                 Cell::from(entry.nat_type.short_code()).style(Style::default().fg(nat_color)),
-                Cell::from(entry.status.emoji()).style(Style::default().fg(status_color)),
+                Cell::from(status_emoji).style(Style::default().fg(status_color)),
                 outcome_cell(entry.outbound.direct_ipv4), // →D4 (us → them)
                 outcome_cell(entry.outbound.direct_ipv6), // →D6
                 outcome_cell(entry.outbound.nat_best()),  // →N (best of v4/v6)

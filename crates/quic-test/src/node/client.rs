@@ -1231,6 +1231,22 @@ impl TestNode {
                                                 },
                                             );
 
+                                            // Skip reconnection attempt for VPS nodes - they have public IPs
+                                            // and don't need NAT traversal. The connect() call triggers
+                                            // ant-quic's NAT coordination which can freeze the node.
+                                            if we_are_vps(&our_addresses) {
+                                                info!(
+                                                    "ConnectBackRequest: {} timeout, skipping reconnect (VPS node)",
+                                                    peer_short
+                                                );
+                                                let _ = event_tx_for_callback.try_send(
+                                                    TuiEvent::NatTestPeerUnreachable {
+                                                        peer_id: target_peer_hex.clone(),
+                                                    },
+                                                );
+                                                return;
+                                            }
+
                                             let _ = event_tx_for_callback.try_send(
                                                 TuiEvent::NatTestRetrying {
                                                     peer_id: target_peer_hex.clone(),
@@ -1536,25 +1552,38 @@ impl TestNode {
         }
 
         // 3. Try NAT traversal (hole-punching)
-        if let Ok(peer_id_bytes) = hex::decode(&peer.peer_id) {
-            if peer_id_bytes.len() >= 32 {
-                let mut peer_id_array = [0u8; 32];
-                peer_id_array.copy_from_slice(&peer_id_bytes[..32]);
-                let quic_peer_id = QuicPeerId(peer_id_array);
+        // Skip NAT traversal for VPS-to-VPS pairs - they have public IPs and the
+        // node.connect() call can trigger ant-quic's NAT coordination which freezes.
+        let external_addrs = self.external_addresses.read().await.clone();
+        let skip_nat_traversal = both_are_vps(peer, &external_addrs);
+        if skip_nat_traversal {
+            debug!(
+                "Skipping NAT traversal for VPS-to-VPS pair: {} <-> us",
+                peer_id_short
+            );
+        }
 
-                match tokio::time::timeout(Duration::from_secs(30), self.node.connect(quic_peer_id))
-                    .await
-                {
-                    Ok(Ok(_conn)) => {
-                        info!("NAT traversal to {} succeeded", peer_id_short);
-                        self.remove_relay(&target_peer_id).await;
-                        return Ok((ConnectionMethod::HolePunched, None));
-                    }
-                    Ok(Err(e)) => {
-                        debug!("NAT traversal to {} failed: {}", peer_id_short, e);
-                    }
-                    Err(_) => {
-                        debug!("NAT traversal to {} timed out", peer_id_short);
+        if !skip_nat_traversal {
+            if let Ok(peer_id_bytes) = hex::decode(&peer.peer_id) {
+                if peer_id_bytes.len() >= 32 {
+                    let mut peer_id_array = [0u8; 32];
+                    peer_id_array.copy_from_slice(&peer_id_bytes[..32]);
+                    let quic_peer_id = QuicPeerId(peer_id_array);
+
+                    match tokio::time::timeout(Duration::from_secs(30), self.node.connect(quic_peer_id))
+                        .await
+                    {
+                        Ok(Ok(_conn)) => {
+                            info!("NAT traversal to {} succeeded", peer_id_short);
+                            self.remove_relay(&target_peer_id).await;
+                            return Ok((ConnectionMethod::HolePunched, None));
+                        }
+                        Ok(Err(e)) => {
+                            debug!("NAT traversal to {} failed: {}", peer_id_short, e);
+                        }
+                        Err(_) => {
+                            debug!("NAT traversal to {} timed out", peer_id_short);
+                        }
                     }
                 }
             }
@@ -1916,6 +1945,8 @@ impl TestNode {
         let fully_tested_peers = Arc::clone(&self.fully_tested_peers);
         let max_peers = self.config.max_peers;
         let epidemic_gossip = Arc::clone(&self.epidemic_gossip);
+        let relay_state = Arc::clone(&self.relay_state);
+        let external_addresses = Arc::clone(&self.external_addresses);
 
         tokio::spawn(async move {
             // Periodic cleanup and announcement ticker
@@ -2418,7 +2449,26 @@ impl TestNode {
                                     data.len(),
                                     &sender_hex[..8.min(sender_hex.len())]
                                 );
-                                // TODO: Process relay message
+
+                                // Process the relay message
+                                let response = handle_relay_message_standalone(
+                                    &data,
+                                    &endpoint,
+                                    &relay_state,
+                                    &peer_id,
+                                    &external_addresses,
+                                ).await;
+
+                                // Send response back to the sender if any
+                                if let Some(response_bytes) = response {
+                                    let inner_ep = endpoint.inner_endpoint();
+                                    if let Ok(Some(conn)) = inner_ep.get_quic_connection(&sender_peer_id) {
+                                        if let Ok(mut stream) = conn.open_uni().await {
+                                            let _ = stream.write_all(&response_bytes).await;
+                                            let _ = stream.finish();
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -3434,6 +3484,172 @@ impl TestNode {
         request.to_bytes()
     }
 
+    /// Attempt NAT traversal via gossip-based relay discovery.
+    ///
+    /// When direct connection and standard NAT traversal fail, this uses the
+    /// epidemic gossip network to find a relay peer that can reach the target
+    /// and coordinate hole-punching.
+    ///
+    /// Flow:
+    /// 1. Send CAN_YOU_REACH to all connected peers in parallel
+    /// 2. Wait for first positive response (or timeout)
+    /// 3. If found, send RELAY_PUNCH_ME_NOW through the relay
+    /// 4. The relay forwards to target, which initiates hole-punch
+    ///
+    /// Returns true if hole-punch coordination was initiated.
+    pub async fn try_gossip_nat_traversal(
+        &self,
+        target_peer_id: [u8; 32],
+    ) -> Result<bool, String> {
+        let target_hex = hex::encode(&target_peer_id[..8]);
+        info!(
+            "Attempting gossip-based NAT traversal to peer {}...",
+            target_hex
+        );
+
+        // Get all connected peers to query
+        let connected_peers = self.connected_peers.read().await;
+        let peer_ids: Vec<String> = connected_peers.keys().cloned().collect();
+        drop(connected_peers);
+
+        if peer_ids.is_empty() {
+            return Err("No connected peers for relay discovery".to_string());
+        }
+
+        info!(
+            "Querying {} connected peers for relay to {}",
+            peer_ids.len(),
+            target_hex
+        );
+
+        // Generate a unique request ID
+        let request_id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+
+        // Create the CAN_YOU_REACH request
+        let request_bytes = match self.create_can_you_reach_request(target_peer_id, request_id) {
+            Ok(bytes) => bytes,
+            Err(e) => return Err(format!("Failed to create request: {}", e)),
+        };
+
+        // Send CAN_YOU_REACH to all connected peers
+        let node = Arc::clone(&self.node);
+        let inner_endpoint = node.inner_endpoint();
+        let mut sent_to_peers = Vec::new();
+
+        for peer_id_hex in &peer_ids {
+            if let Ok(peer_id_bytes) = hex::decode(peer_id_hex) {
+                if peer_id_bytes.len() >= 32 {
+                    let mut peer_id_array = [0u8; 32];
+                    peer_id_array.copy_from_slice(&peer_id_bytes[..32]);
+
+                    // Don't query the target itself
+                    if peer_id_array == target_peer_id {
+                        continue;
+                    }
+
+                    let quic_peer_id = QuicPeerId(peer_id_array);
+
+                    // Try to send via existing QUIC connection
+                    if let Ok(Some(conn)) = inner_endpoint.get_quic_connection(&quic_peer_id) {
+                        if let Ok(mut stream) = conn.open_uni().await {
+                            if stream.write_all(&request_bytes).await.is_ok() {
+                                let _ = stream.finish();
+                                sent_to_peers.push(peer_id_hex.clone());
+                                debug!(
+                                    "Sent CAN_YOU_REACH to {} for target {}",
+                                    &peer_id_hex[..8.min(peer_id_hex.len())],
+                                    target_hex
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if sent_to_peers.is_empty() {
+            return Err("Failed to send CAN_YOU_REACH to any peer".to_string());
+        }
+
+        info!(
+            "Sent CAN_YOU_REACH to {} peers, waiting for responses...",
+            sent_to_peers.len()
+        );
+
+        // Wait briefly for responses (they'll be processed via incoming message handler)
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        // Check relay_state for peers that can reach target
+        let mut relay_candidate: Option<(String, Vec<SocketAddr>)> = None;
+        {
+            let rs = self.relay_state.read().await;
+            if let Some(info) = rs.known_peers.get(&target_peer_id) {
+                if info.is_connected {
+                    // We're already connected to the target - no relay needed
+                    info!("Already connected to target {} - no relay needed", target_hex);
+                    return Ok(true);
+                }
+            }
+            // Check if any known peer has target in their peer list
+            for (peer_id_array, peer_info) in &rs.known_peers {
+                if peer_info.is_connected && peer_id_array != &target_peer_id {
+                    relay_candidate = Some((hex::encode(peer_id_array), peer_info.external_addresses.clone()));
+                    break;
+                }
+            }
+            drop(rs);
+        }
+
+        // If we found a relay candidate, send RELAY_PUNCH_ME_NOW
+        if let Some((relay_peer_hex, _)) = relay_candidate {
+            info!(
+                "Sending RELAY_PUNCH_ME_NOW via {} to target {}",
+                &relay_peer_hex[..8.min(relay_peer_hex.len())],
+                target_hex
+            );
+
+            // Create the relay request
+            let relay_request_bytes = match self
+                .create_relay_punch_me_now_request(target_peer_id, request_id + 1, 1, 0)
+                .await
+            {
+                Ok(bytes) => bytes,
+                Err(e) => return Err(format!("Failed to create relay request: {}", e)),
+            };
+
+            // Send to relay peer
+            if let Ok(relay_peer_bytes) = hex::decode(&relay_peer_hex) {
+                if relay_peer_bytes.len() >= 32 {
+                    let mut relay_peer_array = [0u8; 32];
+                    relay_peer_array.copy_from_slice(&relay_peer_bytes[..32]);
+                    let relay_quic_id = QuicPeerId(relay_peer_array);
+
+                    let endpoint = self.node.inner_endpoint();
+                    if let Ok(Some(conn)) = endpoint.get_quic_connection(&relay_quic_id) {
+                        if let Ok(mut stream) = conn.open_uni().await {
+                            if stream.write_all(&relay_request_bytes).await.is_ok() {
+                                let _ = stream.finish();
+                                info!(
+                                    "RELAY_PUNCH_ME_NOW sent to {} for target {}",
+                                    &relay_peer_hex[..8.min(relay_peer_hex.len())],
+                                    target_hex
+                                );
+                                return Ok(true);
+                            }
+                        }
+                    }
+                }
+            }
+
+            return Err("Failed to send relay request".to_string());
+        }
+
+        Err("No relay candidate found".to_string())
+    }
+
     async fn discover_external_address(&self) {
         // In local_only mode, skip external address discovery via VPS nodes
         // Local Docker nodes don't need external address discovery
@@ -4443,13 +4659,15 @@ impl TestNode {
 
                     for vps_peer in BOOTSTRAP_PEERS {
                         // Create deterministic peer ID for VPS node
+                        // IMPORTANT: Peer IDs must be 32 bytes (64 hex chars) to match
+                        // the format used by actual connected peers
                         use sha2::{Digest, Sha256};
                         let peer_id_bytes = {
                             let mut hasher = Sha256::new();
                             hasher.update(vps_peer.name.as_bytes());
                             hasher.update(vps_peer.ipv4.octets());
                             let hash = hasher.finalize();
-                            hex::encode(&hash[..8]) // First 8 bytes as hex
+                            hex::encode(hash) // Full 32 bytes as 64 hex chars
                         };
 
                         // Skip if already in the peer list
@@ -4770,10 +4988,137 @@ impl TestNode {
                                 }
                             }
                         } else {
-                            // Connection failed - try relay fallback before giving up
+                            // Connection failed - try gossip-based NAT traversal first
                             let target_peer_id = peer_id_to_bytes(&candidate.peer_id);
 
-                            // Check if we have a relay that can reach the target
+                            // GOSSIP-BASED NAT TRAVERSAL: Query connected peers for relay path
+                            info!(
+                                "Direct/NAT traversal failed to {}, trying gossip-based relay discovery...",
+                                peer_id_short
+                            );
+
+                            let gossip_traversal_result = try_gossip_nat_traversal_standalone(
+                                target_peer_id,
+                                &endpoint,
+                                &connected_peers,
+                                &relay_state,
+                                &our_peer_id,
+                                &external_addresses,
+                            )
+                            .await;
+
+                            if let Ok(true) = gossip_traversal_result {
+                                // Gossip-based coordination initiated - we also need to punch!
+                                info!(
+                                    "Gossip-based NAT coordination sent for {}, punching back...",
+                                    peer_id_short
+                                );
+
+                                // CRITICAL: We need to also punch to the target while they're punching to us
+                                // Try to connect to the target's known addresses - this creates bidirectional punching
+                                for addr in &candidate.addresses {
+                                    info!(
+                                        "Requester punching back to {} at {}",
+                                        peer_id_short, addr
+                                    );
+                                    let endpoint_for_punch = Arc::clone(&endpoint);
+                                    let addr_copy = *addr;
+                                    tokio::spawn(async move {
+                                        let _ = tokio::time::timeout(
+                                            Duration::from_secs(5),
+                                            endpoint_for_punch.connect_addr(addr_copy),
+                                        )
+                                        .await;
+                                    });
+                                }
+
+                                // Give the hole-punch time to complete
+                                tokio::time::sleep(Duration::from_secs(3)).await;
+
+                                // Check if we're now connected
+                                let inner_ep = endpoint.inner_endpoint();
+                                let quic_target = QuicPeerId(target_peer_id);
+                                if let Ok(Some(_)) = inner_ep.get_quic_connection(&quic_target) {
+                                    success.fetch_add(1, Ordering::Relaxed);
+                                    holepunch.fetch_add(1, Ordering::Relaxed);
+                                    {
+                                        let mut stats = nat_stats.write().await;
+                                        stats.hole_punch_success += 1;
+                                    }
+
+                                    // Update epidemic gossip layer
+                                    if let Ok(peer_bytes) = hex::decode(&candidate.peer_id) {
+                                        if peer_bytes.len() == 32 {
+                                            let mut arr = [0u8; 32];
+                                            arr.copy_from_slice(&peer_bytes);
+                                            let gossip_peer_id = GossipPeerId::new(arr);
+                                            epidemic_gossip
+                                                .set_connection_type(
+                                                    gossip_peer_id,
+                                                    GossipConnectionType::HolePunched,
+                                                )
+                                                .await;
+                                        }
+                                    }
+
+                                    let now = Instant::now();
+                                    let mut matrix = result.matrix.clone();
+                                    matrix.nat_traversal_success = true;
+
+                                    let mut peers = connected_peers.write().await;
+                                    let existing_inbound_verified = peers
+                                        .get(&candidate.peer_id)
+                                        .map(|t| t.inbound_verified)
+                                        .unwrap_or(false);
+
+                                    let tracked = TrackedPeer {
+                                        info: candidate.clone(),
+                                        method: ConnectionMethod::HolePunched,
+                                        direction: ConnectionDirection::Outbound,
+                                        connected_at: now,
+                                        last_activity: now,
+                                        stats: PeerStats::default(),
+                                        sequence: AtomicU64::new(0),
+                                        consecutive_failures: 0,
+                                        connectivity: matrix.clone(),
+                                        outbound_verified: true,
+                                        inbound_verified: existing_inbound_verified,
+                                        last_nat_test_time: None,
+                                        quic_test_success: false,
+                                        gossip_test_success: false,
+                                    };
+
+                                    let peer_for_tui = tracked.to_connected_peer();
+                                    let was_new_peer = !peers.contains_key(&candidate.peer_id);
+                                    peers.insert(candidate.peer_id.clone(), tracked);
+                                    drop(peers);
+
+                                    if was_new_peer {
+                                        outbound_connections.fetch_add(1, Ordering::SeqCst);
+                                    }
+
+                                    info!(
+                                        "GOSSIP-BASED HOLE-PUNCH SUCCESS to {} via relay coordination!",
+                                        peer_id_short
+                                    );
+
+                                    send_tui_event(&event_tx, TuiEvent::PeerConnected(peer_for_tui));
+                                    // Connection succeeded via gossip-based hole-punch
+                                    // Skip the relay fallback by returning early from this future
+                                    return true;
+                                }
+                            }
+                            // If gossip traversal initiated but connection not established,
+                            // fall through to existing relay fallback
+
+                            if let Err(e) = &gossip_traversal_result {
+                                debug!(
+                                    "Gossip-based NAT traversal to {} failed: {}",
+                                    peer_id_short, e
+                                );
+                            }
+
+                            // Check if we have a relay that can reach the target (existing fallback)
                             let relay_found = {
                                 let rs = relay_state.read().await;
                                 // First check if we already have an active relay for this target
@@ -5983,6 +6328,424 @@ async fn real_connect_comprehensive(
         matrix,
         best_method,
         success,
+    }
+}
+
+/// Attempt gossip-based NAT traversal (standalone version for worker contexts).
+///
+/// When direct connection and standard NAT traversal fail, this uses connected
+/// peers to discover a relay path and coordinate hole-punching.
+///
+/// This is a standalone function that can be called from worker tasks that don't
+/// have access to TestNode directly.
+async fn try_gossip_nat_traversal_standalone(
+    target_peer_id: [u8; 32],
+    endpoint: &Arc<Node>,
+    connected_peers: &Arc<RwLock<HashMap<String, TrackedPeer>>>,
+    relay_state: &Arc<RwLock<RelayState>>,
+    our_peer_id: &str,
+    external_addresses: &Arc<RwLock<Vec<SocketAddr>>>,
+) -> Result<bool, String> {
+    let target_hex = hex::encode(&target_peer_id[..8]);
+    info!(
+        "Attempting gossip-based NAT traversal to peer {}...",
+        target_hex
+    );
+
+    // Get all connected peers to query
+    let peers = connected_peers.read().await;
+    let peer_ids: Vec<String> = peers.keys().cloned().collect();
+    drop(peers);
+
+    if peer_ids.is_empty() {
+        return Err("No connected peers for relay discovery".to_string());
+    }
+
+    info!(
+        "Querying {} connected peers for relay to {}",
+        peer_ids.len(),
+        target_hex
+    );
+
+    // Generate a unique request ID
+    let request_id = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+
+    // Convert our peer ID to bytes
+    let our_peer_id_bytes = if let Ok(bytes) = hex::decode(our_peer_id) {
+        if bytes.len() >= 32 {
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&bytes[..32]);
+            arr
+        } else {
+            return Err("Invalid our_peer_id".to_string());
+        }
+    } else {
+        return Err("Failed to decode our_peer_id".to_string());
+    };
+
+    // Create the CAN_YOU_REACH request
+    let request = CanYouReachRequest {
+        magic: RELAY_MAGIC,
+        request_id,
+        target_peer_id,
+        requester_peer_id: our_peer_id_bytes,
+    };
+    let request_bytes = match request.to_bytes() {
+        Ok(bytes) => bytes,
+        Err(e) => return Err(format!("Failed to serialize request: {}", e)),
+    };
+
+    // Send CAN_YOU_REACH to connected peers and track which ones we sent to
+    let inner_endpoint = endpoint.inner_endpoint();
+    let mut sent_to_peers = Vec::new();
+
+    for peer_id_hex in &peer_ids {
+        if let Ok(peer_id_bytes) = hex::decode(peer_id_hex) {
+            if peer_id_bytes.len() >= 32 {
+                let mut peer_id_array = [0u8; 32];
+                peer_id_array.copy_from_slice(&peer_id_bytes[..32]);
+
+                // Don't query the target itself
+                if peer_id_array == target_peer_id {
+                    continue;
+                }
+
+                let quic_peer_id = QuicPeerId(peer_id_array);
+
+                // Try to send via existing QUIC connection
+                if let Ok(Some(conn)) = inner_endpoint.get_quic_connection(&quic_peer_id) {
+                    if let Ok(mut stream) = conn.open_uni().await {
+                        if stream.write_all(&request_bytes).await.is_ok() {
+                            let _ = stream.finish();
+                            sent_to_peers.push(peer_id_hex.clone());
+                            debug!(
+                                "Sent CAN_YOU_REACH to {} for target {}",
+                                &peer_id_hex[..8.min(peer_id_hex.len())],
+                                target_hex
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if sent_to_peers.is_empty() {
+        return Err("Failed to send CAN_YOU_REACH to any peer".to_string());
+    }
+
+    info!(
+        "Sent CAN_YOU_REACH to {} peers, waiting for responses...",
+        sent_to_peers.len()
+    );
+
+    // Wait briefly for responses (they'll be processed via incoming message handler)
+    // then check relay_state for any peer that knows the target
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // Check relay_state for peers that can reach target
+    let mut relay_candidate: Option<String> = None;
+    {
+        let rs = relay_state.read().await;
+
+        // First check if we're now connected to the target
+        if let Some(info) = rs.known_peers.get(&target_peer_id) {
+            if info.is_connected {
+                info!("Now connected to target {} - success!", target_hex);
+                return Ok(true);
+            }
+        }
+
+        // Find any connected peer that might be able to relay
+        for peer_id_hex in &sent_to_peers {
+            if let Ok(peer_bytes) = hex::decode(peer_id_hex) {
+                if peer_bytes.len() >= 32 {
+                    let mut arr = [0u8; 32];
+                    arr.copy_from_slice(&peer_bytes[..32]);
+                    if let Some(info) = rs.known_peers.get(&arr) {
+                        if info.is_connected {
+                            relay_candidate = Some(peer_id_hex.clone());
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // If we found a relay candidate, send RELAY_PUNCH_ME_NOW
+    if let Some(relay_peer_hex) = relay_candidate {
+        info!(
+            "Using {} as relay to reach {}",
+            &relay_peer_hex[..8.min(relay_peer_hex.len())],
+            target_hex
+        );
+
+        // Get our external addresses
+        let addrs = external_addresses.read().await.clone();
+
+        // Create the relay request
+        let relay_request = RelayPunchMeNowRequest::new(
+            target_peer_id,
+            our_peer_id_bytes,
+            addrs,
+            1, // round
+            0, // paired_with_sequence
+        );
+        let relay_request_bytes = match relay_request.to_bytes() {
+            Ok(bytes) => bytes,
+            Err(e) => return Err(format!("Failed to serialize relay request: {}", e)),
+        };
+
+        // Send to relay peer
+        if let Ok(relay_peer_bytes) = hex::decode(&relay_peer_hex) {
+            if relay_peer_bytes.len() >= 32 {
+                let mut relay_peer_array = [0u8; 32];
+                relay_peer_array.copy_from_slice(&relay_peer_bytes[..32]);
+                let relay_quic_id = QuicPeerId(relay_peer_array);
+
+                if let Ok(Some(conn)) = inner_endpoint.get_quic_connection(&relay_quic_id) {
+                    if let Ok(mut stream) = conn.open_uni().await {
+                        if stream.write_all(&relay_request_bytes).await.is_ok() {
+                            let _ = stream.finish();
+                            info!(
+                                "RELAY_PUNCH_ME_NOW sent via {} for target {}",
+                                &relay_peer_hex[..8.min(relay_peer_hex.len())],
+                                target_hex
+                            );
+                            return Ok(true);
+                        }
+                    }
+                }
+            }
+        }
+
+        return Err("Failed to send relay request".to_string());
+    }
+
+    Err("No relay path found to target".to_string())
+}
+
+/// Handle a relay message (standalone version for use in spawned tasks).
+///
+/// This processes incoming relay messages (CAN_YOU_REACH, RELAY_PUNCH_ME_NOW, etc.)
+/// and returns any response that should be sent back to the sender.
+async fn handle_relay_message_standalone(
+    data: &[u8],
+    endpoint: &Arc<Node>,
+    _relay_state: &Arc<RwLock<RelayState>>,
+    our_peer_id: &str,
+    external_addresses: &Arc<RwLock<Vec<SocketAddr>>>,
+) -> Option<Vec<u8>> {
+    use super::test_protocol::{ReachResponse, RelayAckResponse, RelayMessage};
+
+    // Parse the relay message
+    let msg = match RelayMessage::from_bytes(data) {
+        Ok(msg) => msg,
+        Err(e) => {
+            debug!("Failed to parse relay message: {}", e);
+            return None;
+        }
+    };
+
+    match msg {
+        RelayMessage::CanYouReach(req) => {
+            // Check if we're connected to the target
+            let target_hex = hex::encode(req.target_peer_id);
+            let requester_hex = hex::encode(req.requester_peer_id);
+            let target_quic_id = QuicPeerId(req.target_peer_id);
+            let inner_ep = endpoint.inner_endpoint();
+
+            let connected = inner_ep
+                .get_quic_connection(&target_quic_id)
+                .map(|c| c.is_some())
+                .unwrap_or(false);
+
+            info!(
+                "CAN_YOU_REACH from {} for target {}: {}",
+                &requester_hex[..8.min(requester_hex.len())],
+                &target_hex[..8.min(target_hex.len())],
+                if connected { "YES" } else { "NO" }
+            );
+
+            let our_addrs = external_addresses.read().await.clone();
+            let is_public = !our_addrs.is_empty();
+            if connected {
+                ReachResponse::reachable(req.request_id, req.target_peer_id, our_addrs, true, is_public)
+            } else {
+                ReachResponse::unreachable(req.request_id, req.target_peer_id, is_public)
+            }
+            .to_bytes()
+            .ok()
+        }
+
+        RelayMessage::RelayPunchMeNow(req) => {
+            let target_hex = hex::encode(req.target_peer_id);
+            let requester_hex = hex::encode(req.requester_peer_id);
+
+            // Check if WE are the target (this message was forwarded to us)
+            let our_peer_id_bytes = peer_id_to_bytes(our_peer_id);
+            let we_are_target = our_peer_id_bytes == req.target_peer_id;
+
+            if we_are_target {
+                // We're the target! Start punching to the requester's addresses
+                info!(
+                    "PUNCH_ME_NOW received! {} wants us to punch to {} addresses (round={})",
+                    &requester_hex[..8.min(requester_hex.len())],
+                    req.requester_addresses.len(),
+                    req.round
+                );
+
+                // Try to connect to the requester at their addresses
+                let endpoint_clone = Arc::clone(endpoint);
+                let addresses = req.requester_addresses.clone();
+                let round = req.round;
+                let requester_hex_for_spawn = requester_hex.clone();
+
+                tokio::spawn(async move {
+                    for addr in &addresses {
+                        info!(
+                            "Punching to {} at {} (round={})",
+                            &requester_hex_for_spawn[..8.min(requester_hex_for_spawn.len())],
+                            addr,
+                            round
+                        );
+                        // Try to connect - this sends packets that punch through NAT
+                        let result = tokio::time::timeout(
+                            Duration::from_secs(5),
+                            endpoint_clone.connect_addr(*addr),
+                        )
+                        .await;
+
+                        match result {
+                            Ok(Ok(_)) => {
+                                info!(
+                                    "HOLE-PUNCH SUCCESS! Connected to {} at {}",
+                                    &requester_hex_for_spawn[..8.min(requester_hex_for_spawn.len())],
+                                    addr
+                                );
+                                return;
+                            }
+                            Ok(Err(e)) => {
+                                debug!(
+                                    "Punch to {} at {} failed: {}",
+                                    &requester_hex_for_spawn[..8.min(requester_hex_for_spawn.len())],
+                                    addr,
+                                    e
+                                );
+                            }
+                            Err(_) => {
+                                debug!(
+                                    "Punch to {} at {} timed out",
+                                    &requester_hex_for_spawn[..8.min(requester_hex_for_spawn.len())],
+                                    addr
+                                );
+                            }
+                        }
+                    }
+                    info!(
+                        "Hole-punch attempts completed for {} (round={})",
+                        &requester_hex_for_spawn[..8.min(requester_hex_for_spawn.len())],
+                        round
+                    );
+                });
+
+                // Return ACK immediately - punching happens async
+                return RelayAckResponse::success(req.request_id).to_bytes().ok();
+            }
+
+            // We're a relay - forward to the target
+            info!(
+                "RELAY_PUNCH_ME_NOW from {} for target {} (round={}, {} addresses)",
+                &requester_hex[..8.min(requester_hex.len())],
+                &target_hex[..8.min(target_hex.len())],
+                req.round,
+                req.requester_addresses.len()
+            );
+
+            // Check if we're connected to the target
+            let target_quic_id = QuicPeerId(req.target_peer_id);
+            let inner_ep = endpoint.inner_endpoint();
+
+            let connection = match inner_ep.get_quic_connection(&target_quic_id) {
+                Ok(Some(conn)) => conn,
+                Ok(None) => {
+                    warn!(
+                        "Cannot relay PUNCH_ME_NOW to {} - not connected",
+                        &target_hex[..8.min(target_hex.len())]
+                    );
+                    return RelayAckResponse::failure(
+                        req.request_id,
+                        "Not connected to target".to_string(),
+                    )
+                    .to_bytes()
+                    .ok();
+                }
+                Err(e) => {
+                    warn!("Failed to get connection to target: {}", e);
+                    return RelayAckResponse::failure(
+                        req.request_id,
+                        format!("Connection error: {}", e),
+                    )
+                    .to_bytes()
+                    .ok();
+                }
+            };
+
+            // Forward the PUNCH_ME_NOW request to the target peer
+            let forward_data = match req.to_bytes() {
+                Ok(data) => data,
+                Err(e) => {
+                    warn!("Failed to serialize PUNCH_ME_NOW for forwarding: {}", e);
+                    return RelayAckResponse::failure(
+                        req.request_id,
+                        format!("Serialize error: {}", e),
+                    )
+                    .to_bytes()
+                    .ok();
+                }
+            };
+
+            // Open a unidirectional stream and forward the message
+            match connection.open_uni().await {
+                Ok(mut stream) => {
+                    if let Err(e) = stream.write_all(&forward_data).await {
+                        warn!("Failed to write PUNCH_ME_NOW to target: {}", e);
+                        return RelayAckResponse::failure(
+                            req.request_id,
+                            format!("Write error: {}", e),
+                        )
+                        .to_bytes()
+                        .ok();
+                    }
+                    let _ = stream.finish();
+
+                    info!(
+                        "Forwarded PUNCH_ME_NOW to {} ({} bytes, round={})",
+                        &target_hex[..8.min(target_hex.len())],
+                        forward_data.len(),
+                        req.round
+                    );
+
+                    RelayAckResponse::success(req.request_id).to_bytes().ok()
+                }
+                Err(e) => {
+                    warn!("Failed to open stream to target: {}", e);
+                    RelayAckResponse::failure(req.request_id, format!("Stream error: {}", e))
+                        .to_bytes()
+                        .ok()
+                }
+            }
+        }
+
+        // Responses are handled by the requester, not here
+        RelayMessage::ReachResponse(_) => None,
+        RelayMessage::RelayAck(_) => None,
+        RelayMessage::RelayedData(_) => None,
+        RelayMessage::RelayData(_) => None,
     }
 }
 

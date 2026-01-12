@@ -1,0 +1,20 @@
+[Unit]
+Description=Saorsa Test Network Node (NAT Simulation)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+# Verify namespace exists before starting
+ExecStartPre=/bin/sh -c 'ip netns list | grep -q nat-sim || exit 1'
+# Run inside the NAT simulation namespace
+ExecStart=/usr/bin/ip netns exec nat-sim /opt/saorsa-test/saorsa-quic-test --registry-url https://saorsa-1.saorsalabs.com --bind-port 9000
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/saorsa-quic-test.log
+StandardError=append:/var/log/saorsa-quic-test.log
+Environment=RUST_LOG=info,saorsa_quic_test=debug
+
+[Install]
+WantedBy=multi-user.target

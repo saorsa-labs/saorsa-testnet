@@ -32,7 +32,7 @@ pub const TOPIC_PEER_RESPONSE: &str = "ant-quic/peer-response/v1";
 /// A peer announcement broadcast via gossip.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeerAnnouncement {
-    /// Hex-encoded peer ID (first 16 chars of SHA-256(ML-DSA-65 pubkey)).
+    /// Hex-encoded peer ID (64 chars = 32 bytes from ant-quic PeerId).
     pub peer_id: String,
     /// All known addresses for this peer.
     pub addresses: Vec<SocketAddr>,

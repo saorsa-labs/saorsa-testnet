@@ -36,17 +36,8 @@ REGISTRY_PORT="8080"
 NODE_NAMES="saorsa-1 saorsa-2 saorsa-3 saorsa-4 saorsa-5 saorsa-6 saorsa-7 saorsa-8 saorsa-9"
 
 get_node_hostname() {
-    case "$1" in
-        saorsa-1) echo "saorsa-1.saorsalabs.com" ;;
-        saorsa-2) echo "saorsa-2.saorsalabs.com" ;;
-        saorsa-3) echo "saorsa-3.saorsalabs.com" ;;
-        saorsa-4) echo "saorsa-4.saorsalabs.com" ;;
-        saorsa-5) echo "saorsa-5.saorsalabs.com" ;;
-        saorsa-6) echo "saorsa-6.saorsalabs.com" ;;
-        saorsa-7) echo "saorsa-7.saorsalabs.com" ;;
-        saorsa-8) echo "saorsa-8.saorsalabs.com" ;;
-        saorsa-9) echo "saorsa-9.saorsalabs.com" ;;
-    esac
+    # Use IP addresses directly since DNS may not be configured
+    get_node_ip "$1"
 }
 
 get_node_ip() {

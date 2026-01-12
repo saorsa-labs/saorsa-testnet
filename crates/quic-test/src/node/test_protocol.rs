@@ -449,14 +449,26 @@ impl RelayMessage {
         serde_json::from_slice(data)
     }
 
-    /// Check if bytes look like a relay message (check magic).
+    /// Check if bytes look like a relay message.
+    ///
+    /// Relay messages are JSON-encoded enum variants, so we look for
+    /// the variant names that indicate a relay protocol message.
     pub fn is_relay_message(data: &[u8]) -> bool {
-        // JSON-encoded, so we look for the magic in the content
-        if data.len() < 10 {
+        if data.len() < 20 {
             return false;
         }
-        // Quick heuristic: relay messages contain "RLAY" magic
-        data.windows(4).any(|w| w == RELAY_MAGIC)
+        // JSON-encoded relay messages start with {"CanYouReach": or {"RelayPunchMeNow": etc.
+        // Check for relay-specific enum variant names
+        let s = match std::str::from_utf8(data) {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
+        s.contains("\"CanYouReach\"")
+            || s.contains("\"ReachResponse\"")
+            || s.contains("\"RelayPunchMeNow\"")
+            || s.contains("\"RelayAck\"")
+            || s.contains("\"RelayData\"")
+            || s.contains("\"RelayedData\"")
     }
 }
 

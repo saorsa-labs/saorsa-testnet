@@ -1,0 +1,16 @@
+[Unit]
+Description=NAT Simulation Network Setup
+After=network-online.target
+Wants=network-online.target
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Restore NAT simulation on boot
+ExecStart=/bin/bash -c 'source /etc/nat-sim/config && /root/nat-simulation/setup-nat-base.sh $PUBLIC_IP $QUIC_PORT $API_PORT && /root/nat-simulation/nat-type-$(cat /etc/nat-sim/nat-type).sh'
+# Clean up on stop
+ExecStop=/root/nat-simulation/cleanup-nat.sh
+
+[Install]
+WantedBy=multi-user.target
