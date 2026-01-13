@@ -357,7 +357,7 @@ mod tests {
     #[test]
     fn test_bootstrap_addrs_v4() {
         let addrs = bootstrap_addrs_v4();
-        assert_eq!(addrs.len(), 9);
+        assert_eq!(addrs.len(), 10);
         assert!(addrs.iter().all(|a| a.port() == 9000));
     }
 
@@ -365,7 +365,7 @@ mod tests {
     fn test_coordinator_nodes() {
         let coordinators = coordinator_nodes();
         // All VPS nodes are coordinators
-        assert_eq!(coordinators.len(), 9);
+        assert_eq!(coordinators.len(), 10);
     }
 
     #[test]

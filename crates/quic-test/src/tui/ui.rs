@@ -14,7 +14,7 @@
 //! - [3] Connectivity Matrix - N×N peer-to-peer connectivity test results
 //! - [4] Protocol Log - Real-time message flow visualization
 
-use crate::registry::ConnectionMethod;
+use crate::registry::{ConnectionMethod, NatType};
 use crate::tui::app::{App, Tab};
 use crate::tui::types::{ConnectivityTestPhase, country_flag};
 use ratatui::{
@@ -186,7 +186,7 @@ fn draw_tab_bar(frame: &mut Frame, app: &App, area: Rect) {
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::Cyan))
-                .title(" Saorsa TestNet - [G]ossip [C]onnect [L]og or Tab/1-4 "),
+                .title(format!(" Saorsa TestNet v{} - [G]ossip [C]onnect [L]og or Tab/1-4 ", env!("CARGO_PKG_VERSION"))),
         )
         .select(selected_idx)
         // Use Gray instead of White for better visibility on light backgrounds
@@ -1686,33 +1686,80 @@ fn draw_connectivity_matrix_tab(frame: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3), // Summary header
+            Constraint::Length(6), // Summary header (expanded)
             Constraint::Min(10),   // Matrix table
         ])
         .split(area);
 
-    // Summary header with NAT distribution
+    // Summary header with NAT distribution and connection stats
     let total_peers = app.connection_history.len();
     let connected = app.connected_peers.len();
 
-    // Count peers by NAT difficulty (1=easy, 2=fair, 3=medium, 4=hard, 5=very hard)
-    let mut nat_easy = 0usize;
-    let mut nat_medium = 0usize;
-    let mut nat_hard = 0usize;
+    // Count peers by NAT type for detailed breakdown
+    let mut nat_public = 0usize;
+    let mut nat_fullcone = 0usize;
+    let mut nat_restricted = 0usize;
+    let mut nat_portrestricted = 0usize;
+    let mut nat_symmetric = 0usize;
+    let mut nat_other = 0usize;
+
+    // Count successful connections by method and IP version
+    let mut ipv4_direct_ok = 0usize;
+    let mut ipv6_direct_ok = 0usize;
+    let mut nat_traversal_ok = 0usize;
+    let mut relay_ok = 0usize;
+
     for entry in app.connection_history.values() {
-        match entry.nat_type.hole_punch_difficulty() {
-            1 | 2 => nat_easy += 1,
-            3 => nat_medium += 1,
-            _ => nat_hard += 1,
+        // Count NAT types
+        match entry.nat_type {
+            NatType::None => nat_public += 1,
+            NatType::FullCone | NatType::Upnp | NatType::NatPmp => nat_fullcone += 1,
+            NatType::AddressRestricted => nat_restricted += 1,
+            NatType::PortRestricted => nat_portrestricted += 1,
+            NatType::Symmetric | NatType::Cgnat => nat_symmetric += 1,
+            _ => nat_other += 1,
+        }
+
+        // Count connection successes
+        if matches!(
+            entry.outbound.direct_ipv4,
+            crate::tui::types::MethodOutcome::Success
+        ) {
+            ipv4_direct_ok += 1;
+        }
+        if matches!(
+            entry.outbound.direct_ipv6,
+            crate::tui::types::MethodOutcome::Success
+        ) {
+            ipv6_direct_ok += 1;
+        }
+        if matches!(
+            entry.outbound.nat_ipv4,
+            crate::tui::types::MethodOutcome::Success
+        ) || matches!(
+            entry.outbound.nat_ipv6,
+            crate::tui::types::MethodOutcome::Success
+        ) {
+            nat_traversal_ok += 1;
+        }
+        if matches!(
+            entry.outbound.relay_ipv4,
+            crate::tui::types::MethodOutcome::Success
+        ) || matches!(
+            entry.outbound.relay_ipv6,
+            crate::tui::types::MethodOutcome::Success
+        ) {
+            relay_ok += 1;
         }
     }
 
     let header_block = Block::default()
-        .title(" CONNECTIVITY MATRIX ")
+        .title(" CONNECTIVITY MATRIX - NAT Traversal & IP Version Summary ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
 
-    let header_line = Line::from(vec![
+    // Line 1: Peers and connection status
+    let line1 = Line::from(vec![
         Span::raw("  Peers: "),
         Span::styled(
             format!("{}", total_peers),
@@ -1721,17 +1768,8 @@ fn draw_connectivity_matrix_tab(frame: &mut Frame, app: &App, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw(" ("),
-        Span::styled(format!("{}✓", connected), Style::default().fg(Color::Green)),
-        Span::raw(")  │  NAT: "),
-        Span::styled(format!("{}E", nat_easy), Style::default().fg(Color::Green)),
-        Span::raw("/"),
-        Span::styled(format!("{}M", nat_medium), Style::default().fg(Color::Cyan)),
-        Span::raw("/"),
-        Span::styled(
-            format!("{}H", nat_hard),
-            Style::default().fg(Color::LightRed),
-        ),
-        Span::raw("  │  Local: "),
+        Span::styled(format!("{}●", connected), Style::default().fg(Color::Green)),
+        Span::raw(" connected)  │  Local NAT: "),
         Span::styled(
             app.local_node.nat_type.short_code(),
             Style::default().fg(match app.local_node.nat_type.hole_punch_difficulty() {
@@ -1740,11 +1778,73 @@ fn draw_connectivity_matrix_tab(frame: &mut Frame, app: &App, area: Rect) {
                 _ => Color::LightRed,
             }),
         ),
-        Span::raw("  │  [T] Test"),
+        Span::raw("  │  [T] Test All"),
     ]);
 
+    // Line 2: NAT type breakdown
+    let line2 = Line::from(vec![
+        Span::raw("  NAT Types: "),
+        Span::styled(
+            format!("{}Pub", nat_public),
+            Style::default().fg(Color::Green),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            format!("{}FC", nat_fullcone),
+            Style::default().fg(Color::LightGreen),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            format!("{}AR", nat_restricted),
+            Style::default().fg(Color::Cyan),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            format!("{}PR", nat_portrestricted),
+            Style::default().fg(Color::Yellow),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            format!("{}Sym", nat_symmetric),
+            Style::default().fg(Color::Rgb(255, 165, 0)),
+        ),
+        if nat_other > 0 {
+            Span::styled(
+                format!(" {}?", nat_other),
+                Style::default().fg(Color::DarkGray),
+            )
+        } else {
+            Span::raw("")
+        },
+    ]);
+
+    // Line 3: Connection method success
+    let line3 = Line::from(vec![
+        Span::raw("  Methods:  "),
+        Span::styled("Direct:", Style::default().fg(Color::Green)),
+        Span::styled(
+            format!(" v4:{} v6:{}", ipv4_direct_ok, ipv6_direct_ok),
+            Style::default().fg(Color::White),
+        ),
+        Span::raw("  │  "),
+        Span::styled("NAT-T:", Style::default().fg(Color::Rgb(255, 165, 0))),
+        Span::styled(
+            format!(" {}", nat_traversal_ok),
+            Style::default().fg(Color::White),
+        ),
+        Span::raw("  │  "),
+        Span::styled("Relay:", Style::default().fg(Color::Red)),
+        Span::styled(format!(" {}", relay_ok), Style::default().fg(Color::White)),
+    ]);
+
+    // Line 4: Legend
+    let line4 = Line::from(vec![Span::styled(
+        "  Legend: ✓=Success ✗=Failed ·=Untested  │  →=Outbound ←=Inbound  │  D4=IPv4-Direct D6=IPv6-Direct N=NAT-Traversal R=Relay",
+        Style::default().fg(Color::DarkGray),
+    )]);
+
     frame.render_widget(
-        Paragraph::new(vec![header_line]).block(header_block),
+        Paragraph::new(vec![line1, line2, line3, line4]).block(header_block),
         chunks[0],
     );
 

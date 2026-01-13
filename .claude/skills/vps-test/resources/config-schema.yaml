@@ -1,0 +1,369 @@
+# VPS Test Configuration Schema
+# Project config file: .claude/vps-test.yaml
+
+$schema: "http://json-schema.org/draft-07/schema#"
+title: VPS Test Configuration
+type: object
+required:
+  - project
+  - binary
+  - deploy
+  - tests
+
+properties:
+  project:
+    type: string
+    description: Project identifier (ant-quic, communitas-mcp, etc.)
+    pattern: "^[a-z][a-z0-9-]*$"
+
+  binary:
+    type: object
+    required:
+      - name
+      - build
+      - target
+    properties:
+      name:
+        type: string
+        description: Binary executable name
+        examples: ["ant-quic-test", "communitas-mcp", "saorsa-node"]
+
+      crate:
+        type: string
+        description: Workspace crate path (if not root)
+        examples: ["crates/ant-quic-test-network"]
+
+      build:
+        type: string
+        description: Build command for Linux target
+        default: "cargo zig build --release --target x86_64-unknown-linux-gnu"
+
+      target:
+        type: string
+        description: Path to built binary relative to project root
+        examples: ["target/x86_64-unknown-linux-gnu/release/ant-quic-test"]
+
+      local_build:
+        type: string
+        description: Build command for local macOS (optional)
+        default: "cargo build --release"
+
+  deploy:
+    type: object
+    required:
+      - install_path
+      - service_name
+    properties:
+      install_path:
+        type: string
+        description: Remote installation directory
+        pattern: "^/opt/[a-z][a-z0-9-]*/?$"
+        examples: ["/opt/ant-quic-test/", "/opt/communitas/"]
+
+      service_name:
+        type: string
+        description: Systemd service name
+        examples: ["ant-quic-test", "communitas-mcp"]
+
+      nodes:
+        oneOf:
+          - type: string
+            enum: ["all"]
+          - type: array
+            items:
+              type: string
+              pattern: "^saorsa-[0-9]+$"
+        default: "all"
+        description: Which VPS nodes to deploy to
+        examples: ["all", ["saorsa-2", "saorsa-3", "saorsa-4"]]
+
+      pre_deploy:
+        type: array
+        items:
+          type: string
+        description: Commands to run before deployment
+        examples: [["systemctl stop ant-quic-test"]]
+
+      post_deploy:
+        type: array
+        items:
+          type: string
+        description: Commands to run after deployment
+        examples: [["systemctl daemon-reload", "systemctl start ant-quic-test"]]
+
+  bootstrap:
+    type: object
+    properties:
+      registry:
+        type: string
+        format: uri
+        description: Registry URL for peer discovery
+        default: "https://saorsa-1.saorsalabs.com"
+
+      nodes:
+        type: array
+        items:
+          type: string
+        description: Bootstrap node addresses
+        examples: [["saorsa-2.saorsalabs.com:9000", "saorsa-3.saorsalabs.com:9000"]]
+
+      wait_for_registration:
+        type: integer
+        minimum: 0
+        maximum: 300
+        default: 30
+        description: Seconds to wait for nodes to register with registry
+
+  tests:
+    type: object
+    properties:
+      connectivity:
+        type: object
+        properties:
+          enabled:
+            type: boolean
+            default: true
+
+          success_criteria:
+            type: object
+            properties:
+              direct:
+                type: number
+                minimum: 0
+                maximum: 100
+                default: 99
+                description: Required success rate for direct connections (%)
+
+              nat_traversed:
+                type: number
+                minimum: 0
+                maximum: 100
+                default: 85
+                description: Required success rate for NAT-traversed connections (%)
+
+              relay:
+                type: number
+                minimum: 0
+                maximum: 100
+                default: 100
+                description: Required success rate for relay connections (%)
+
+          nat_cooloff_seconds:
+            type: integer
+            minimum: 0
+            maximum: 300
+            default: 30
+            description: Wait time between NAT traversal attempts to same peer
+
+          timeout_seconds:
+            type: integer
+            minimum: 1
+            maximum: 60
+            default: 10
+            description: Connection attempt timeout
+
+      nat_matrix:
+        type: object
+        properties:
+          enabled:
+            type: boolean
+            default: false
+
+          types:
+            type: array
+            items:
+              type: string
+              enum: ["full_cone", "symmetric", "port_restricted", "address_restricted", "cgnat", "double_nat"]
+            default: ["full_cone", "symmetric", "port_restricted"]
+            description: NAT types to test
+
+      throughput:
+        type: object
+        properties:
+          enabled:
+            type: boolean
+            default: false
+
+          min_mbps:
+            type: number
+            minimum: 1
+            default: 10
+            description: Minimum required throughput (Mbps)
+
+          test_size_mb:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+            description: Data size for throughput test (MB)
+
+      message_delivery:
+        type: object
+        description: For gossip protocol projects
+        properties:
+          enabled:
+            type: boolean
+            default: false
+
+          success_rate:
+            type: number
+            minimum: 0
+            maximum: 100
+            default: 100
+            description: Required message delivery rate (%)
+
+          message_count:
+            type: integer
+            minimum: 1
+            default: 100
+            description: Number of messages to send per test
+
+      crdt_consistency:
+        type: object
+        description: For CRDT-based projects
+        properties:
+          enabled:
+            type: boolean
+            default: false
+
+          max_sync_seconds:
+            type: integer
+            minimum: 1
+            maximum: 300
+            default: 30
+            description: Maximum time for CRDT state to sync across all nodes
+
+      channel_creation:
+        type: object
+        description: For communitas-mcp
+        properties:
+          enabled:
+            type: boolean
+            default: false
+
+          channels_to_create:
+            type: integer
+            minimum: 1
+            default: 10
+            description: Number of channels to create per test
+
+      custom:
+        type: array
+        items:
+          type: object
+          required:
+            - name
+            - command
+          properties:
+            name:
+              type: string
+              description: Test name
+            command:
+              type: string
+              description: Command to run on each node
+            success_pattern:
+              type: string
+              description: Regex pattern to match in output for success
+            timeout_seconds:
+              type: integer
+              default: 60
+        description: Custom test commands
+
+  soak:
+    type: object
+    properties:
+      wait_1hr:
+        type: boolean
+        default: true
+        description: Enable 1-hour stability checkpoint
+
+      wait_6hr:
+        type: boolean
+        default: true
+        description: Enable 6-hour stability checkpoint
+
+      regression_tolerance:
+        type: number
+        minimum: 0
+        maximum: 100
+        default: 0
+        description: Allowed performance regression (%, 0 = strict)
+
+      check_interval_minutes:
+        type: integer
+        minimum: 1
+        default: 5
+        description: How often to check if wait period is complete
+
+  notifications:
+    type: object
+    properties:
+      voice:
+        type: boolean
+        default: true
+        description: Enable 11Labs voice notifications
+
+      on_events:
+        type: array
+        items:
+          type: string
+          enum: ["start", "test_fail", "fix_commit", "wait_start", "complete", "error"]
+        default: ["start", "test_fail", "complete", "error"]
+
+# Example configurations
+examples:
+  - project: ant-quic
+    binary:
+      name: ant-quic-test
+      crate: crates/ant-quic-test-network
+      build: cargo zig build --release -p ant-quic-test-network --target x86_64-unknown-linux-gnu
+      target: target/x86_64-unknown-linux-gnu/release/ant-quic-test
+    deploy:
+      install_path: /opt/ant-quic-test/
+      service_name: ant-quic-test
+      nodes: all
+    bootstrap:
+      registry: https://saorsa-1.saorsalabs.com
+      nodes:
+        - saorsa-2.saorsalabs.com:9000
+        - saorsa-3.saorsalabs.com:9000
+    tests:
+      connectivity:
+        enabled: true
+        success_criteria:
+          direct: 99
+          nat_traversed: 85
+          relay: 100
+        nat_cooloff_seconds: 30
+      nat_matrix:
+        enabled: true
+        types: [full_cone, symmetric, port_restricted]
+      throughput:
+        enabled: true
+        min_mbps: 10
+    soak:
+      wait_1hr: true
+      wait_6hr: true
+      regression_tolerance: 0
+
+  - project: communitas-mcp
+    binary:
+      name: communitas-mcp
+      build: cargo zig build --release -p communitas-mcp --target x86_64-unknown-linux-gnu
+      target: target/x86_64-unknown-linux-gnu/release/communitas-mcp
+    deploy:
+      install_path: /opt/communitas/
+      service_name: communitas-mcp
+      nodes: all
+    tests:
+      message_delivery:
+        enabled: true
+        success_rate: 100
+      crdt_consistency:
+        enabled: true
+        max_sync_seconds: 30
+      channel_creation:
+        enabled: true
+    soak:
+      wait_1hr: true
+      wait_6hr: true

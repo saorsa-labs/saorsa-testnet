@@ -13,6 +13,9 @@ categories = ["network-programming", "command-line-utilities"]
 # Core ant-quic library (from crates.io)
 ant-quic.workspace = true
 
+# Shared transport abstraction layer
+saorsa-transport.workspace = true
+
 # Web server for registry API
 warp.workspace = true
 futures-util.workspace = true

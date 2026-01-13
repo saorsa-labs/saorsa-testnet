@@ -10,10 +10,10 @@
 //! **Key principle**: Registry is used for REPORTING only, not discovery.
 //! Discovery comes from the hardcoded VPS bootstrap peers and epidemic gossip.
 
-use ant_quic::PeerId;
 use ant_quic::bootstrap_cache::{
     BootstrapCache, BootstrapCacheConfig, CachedPeer, NatType as CacheNatType, PeerSource,
 };
+use saorsa_transport::PeerId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::net::SocketAddr;

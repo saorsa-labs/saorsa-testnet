@@ -12,6 +12,7 @@ use crate::epidemic_gossip::{
 };
 use crate::gossip::{
     GossipConfig, GossipEvent, GossipIntegration, PeerCapabilities as GossipCapabilities,
+    PeerConnectionResponse, serialize_peer_response,
 };
 use crate::registry::{
     BgpGeoProvider, ConnectionDirection, ConnectionMethod, ConnectionReport, ConnectivityMatrix,
@@ -44,7 +45,8 @@ use ant_quic::crypto::raw_public_keys::key_utils::{
 use super::test_protocol::{
     CanYouReachRequest, GossipMessage, GossipPeerAnnouncement, GossipPeerInfo, PeerListMessage,
     RELAY_MAGIC, ReachResponse, RelayAckResponse, RelayMessage, RelayPunchMeNowRequest, RelayState,
-    RelayedDataResponse, TestPacket,
+    RelayedDataResponse, TestPacket, is_gossip_stream_type, relay_stream_type,
+    test_packet_stream_type,
 };
 
 /// Configuration for the test node.
@@ -1570,8 +1572,11 @@ impl TestNode {
                     peer_id_array.copy_from_slice(&peer_id_bytes[..32]);
                     let quic_peer_id = QuicPeerId(peer_id_array);
 
-                    match tokio::time::timeout(Duration::from_secs(30), self.node.connect(quic_peer_id))
-                        .await
+                    match tokio::time::timeout(
+                        Duration::from_secs(30),
+                        self.node.connect(quic_peer_id),
+                    )
+                    .await
                     {
                         Ok(Ok(_conn)) => {
                             info!("NAT traversal to {} succeeded", peer_id_short);
@@ -2090,7 +2095,37 @@ impl TestNode {
                                         &query.querier_id[..8.min(query.querier_id.len())],
                                         &query.target_public_key[..16.min(query.target_public_key.len())]
                                     );
-                                    // TODO: Check if we're connected to the target and respond
+
+                                    // Check if we're connected to the target peer
+                                    let connected = connected_peers.read().await;
+                                    let target_connected = connected.contains_key(&query.target_public_key);
+                                    let our_addresses = external_addresses.read().await.clone();
+                                    drop(connected);
+
+                                    if target_connected && !our_addresses.is_empty() {
+                                        // We can reach the target - respond with our info
+                                        let response = PeerConnectionResponse {
+                                            query_id: query.query_id,
+                                            responder_id: peer_id.clone(),
+                                            responder_addresses: our_addresses,
+                                            connected_since_ms: std::time::SystemTime::now()
+                                                .duration_since(std::time::UNIX_EPOCH)
+                                                .map(|d| d.as_millis() as u64)
+                                                .unwrap_or(0),
+                                            connection_quality: 0.9,
+                                        };
+
+                                        // Broadcast response via epidemic gossip
+                                        let response_data = serialize_peer_response(&response);
+                                        if let Err(e) = epidemic_gossip.publish(response_data).await {
+                                            warn!("Failed to publish peer response: {}", e);
+                                        }
+
+                                        info!(
+                                            "Gossip: responded to peer query - we can reach {}",
+                                            &query.target_public_key[..8.min(query.target_public_key.len())]
+                                        );
+                                    }
                                 }
                                 GossipEvent::PeerResponseReceived(response) => {
                                     debug!(
@@ -2098,7 +2133,38 @@ impl TestNode {
                                         &response.responder_id[..8.min(response.responder_id.len())],
                                         &response.query_id[..4]
                                     );
-                                    // TODO: Use response for NAT coordination
+
+                                    // Store responder as potential relay candidate
+                                    if let Ok(responder_bytes) = hex::decode(&response.responder_id) {
+                                        if responder_bytes.len() == 32 && !response.responder_addresses.is_empty() {
+                                            let mut peer_id_array = [0u8; 32];
+                                            peer_id_array.copy_from_slice(&responder_bytes);
+
+                                            // Update relay state with this peer as a relay candidate
+                                            let mut rs = relay_state.write().await;
+                                            if let Some(info) = rs.known_peers.get_mut(&peer_id_array) {
+                                                info.external_addresses = response.responder_addresses.clone();
+                                                info.is_connected = true; // They can reach peers, so they're connected
+                                                info!("Gossip: updated {} as relay candidate",
+                                                    &response.responder_id[..8.min(response.responder_id.len())]);
+                                            } else {
+                                                // Add as new known peer
+                                                let peer_info = super::test_protocol::PeerNetworkInfo {
+                                                    peer_id: peer_id_array,
+                                                    local_addresses: Vec::new(),
+                                                    external_addresses: response.responder_addresses.clone(),
+                                                    is_public: false, // Unknown
+                                                    is_public_ipv4: false,
+                                                    is_public_ipv6: false,
+                                                    is_connected: true, // They responded, so they're reachable
+                                                    last_seen: std::time::Instant::now(),
+                                                };
+                                                rs.known_peers.insert(peer_id_array, peer_info);
+                                                info!("Gossip: added {} as new relay candidate",
+                                                    &response.responder_id[..8.min(response.responder_id.len())]);
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -3156,6 +3222,13 @@ impl TestNode {
             return None;
         }
 
+        // Log protocol routing via saorsa-transport stream type
+        let stream_type = relay_stream_type();
+        debug!(
+            "Processing relay message on stream type {:?} ({})",
+            stream_type, stream_type as u8
+        );
+
         // Try to parse as relay message
         let msg = match RelayMessage::from_bytes(data) {
             Ok(msg) => msg,
@@ -3169,10 +3242,10 @@ impl TestNode {
             RelayMessage::CanYouReach(req) => self.handle_can_you_reach(req).await,
             RelayMessage::RelayPunchMeNow(req) => self.handle_relay_punch_me_now(req).await,
             RelayMessage::RelayData(req) => self.handle_relay_data(req).await,
+            RelayMessage::RelayedData(req) => self.handle_relayed_data(req).await,
             // Responses are handled by the requester, not here
             RelayMessage::ReachResponse(_) => None,
             RelayMessage::RelayAck(_) => None,
-            RelayMessage::RelayedData(_) => None,
         }
     }
 
@@ -3434,6 +3507,71 @@ impl TestNode {
         }
     }
 
+    /// Handle RELAYED_DATA message.
+    ///
+    /// Process data that was relayed to us from another peer via a relay node.
+    /// This allows us to receive data even when behind restrictive NAT.
+    async fn handle_relayed_data(&self, req: RelayedDataResponse) -> Option<Vec<u8>> {
+        let source_hex = hex::encode(req.source_peer_id);
+        let relay_hex = hex::encode(req.relay_peer_id);
+        debug!(
+            "RELAYED_DATA from {} via relay {} ({} bytes)",
+            &source_hex[..8.min(source_hex.len())],
+            &relay_hex[..8.min(relay_hex.len())],
+            req.data.len()
+        );
+
+        // Increment relayed messages counter
+        self.relay_connections.fetch_add(1, Ordering::Relaxed);
+
+        // Try to parse the relayed data as a test packet or other message
+        // The data could be anything - test packets, gossip messages, etc.
+        if let Ok(test_packet) = serde_json::from_slice::<TestPacket>(&req.data) {
+            // It's a test packet - update stats
+            self.total_bytes_received
+                .fetch_add(req.data.len() as u64, Ordering::Relaxed);
+
+            info!(
+                "Received relayed test packet from {} via relay {} (seq={})",
+                &source_hex[..8.min(source_hex.len())],
+                &relay_hex[..8.min(relay_hex.len())],
+                test_packet.sequence
+            );
+
+            // Track that we received from this source peer via relay
+            let source_peer_id_hex = source_hex.clone();
+            let mut connected = self.connected_peers.write().await;
+            if let Some(peer) = connected.get_mut(&source_peer_id_hex) {
+                peer.last_activity = Instant::now();
+                peer.stats.packets_received += 1;
+                peer.consecutive_failures = 0;
+            }
+
+            return None;
+        }
+
+        // Try to parse as a relay message (recursive relay)
+        if serde_json::from_slice::<RelayMessage>(&req.data).is_ok() {
+            debug!(
+                "Received nested relay message from {} via {}",
+                &source_hex[..8.min(source_hex.len())],
+                &relay_hex[..8.min(relay_hex.len())]
+            );
+            // Handle the nested message recursively (with a reasonable depth limit)
+            // For now, just log it - recursive relay handling could lead to loops
+            return None;
+        }
+
+        // Unknown data format - log and ignore
+        debug!(
+            "Received unknown relayed data format from {} ({} bytes)",
+            &source_hex[..8.min(source_hex.len())],
+            req.data.len()
+        );
+
+        None
+    }
+
     /// Send a CAN_YOU_REACH request to a peer.
     ///
     /// Returns the encoded request bytes.
@@ -3497,10 +3635,7 @@ impl TestNode {
     /// 4. The relay forwards to target, which initiates hole-punch
     ///
     /// Returns true if hole-punch coordination was initiated.
-    pub async fn try_gossip_nat_traversal(
-        &self,
-        target_peer_id: [u8; 32],
-    ) -> Result<bool, String> {
+    pub async fn try_gossip_nat_traversal(&self, target_peer_id: [u8; 32]) -> Result<bool, String> {
         let target_hex = hex::encode(&target_peer_id[..8]);
         info!(
             "Attempting gossip-based NAT traversal to peer {}...",
@@ -3589,14 +3724,20 @@ impl TestNode {
             if let Some(info) = rs.known_peers.get(&target_peer_id) {
                 if info.is_connected {
                     // We're already connected to the target - no relay needed
-                    info!("Already connected to target {} - no relay needed", target_hex);
+                    info!(
+                        "Already connected to target {} - no relay needed",
+                        target_hex
+                    );
                     return Ok(true);
                 }
             }
             // Check if any known peer has target in their peer list
             for (peer_id_array, peer_info) in &rs.known_peers {
                 if peer_info.is_connected && peer_id_array != &target_peer_id {
-                    relay_candidate = Some((hex::encode(peer_id_array), peer_info.external_addresses.clone()));
+                    relay_candidate = Some((
+                        hex::encode(peer_id_array),
+                        peer_info.external_addresses.clone(),
+                    ));
                     break;
                 }
             }
@@ -5102,7 +5243,10 @@ impl TestNode {
                                         peer_id_short
                                     );
 
-                                    send_tui_event(&event_tx, TuiEvent::PeerConnected(peer_for_tui));
+                                    send_tui_event(
+                                        &event_tx,
+                                        TuiEvent::PeerConnected(peer_for_tui),
+                                    );
                                     // Connection succeeded via gossip-based hole-punch
                                     // Skip the relay fallback by returning early from this future
                                     return true;
@@ -5313,6 +5457,14 @@ impl TestNode {
                     let packet_size = packet.size() as u64;
 
                     // === DUAL TRANSPORT TESTING ===
+                    // Using saorsa-transport stream type for protocol identification
+                    let stream_type = test_packet_stream_type();
+                    debug!(
+                        "Test packet exchange using stream type {:?} (gossip: {})",
+                        stream_type,
+                        is_gossip_stream_type(stream_type)
+                    );
+
                     // Test 1: Gossip transport (saorsa-gossip)
                     let gossip_result = gossip_test_exchange(&gossip, &peer_id, &packet).await;
 
@@ -6574,7 +6726,13 @@ async fn handle_relay_message_standalone(
             let our_addrs = external_addresses.read().await.clone();
             let is_public = !our_addrs.is_empty();
             if connected {
-                ReachResponse::reachable(req.request_id, req.target_peer_id, our_addrs, true, is_public)
+                ReachResponse::reachable(
+                    req.request_id,
+                    req.target_peer_id,
+                    our_addrs,
+                    true,
+                    is_public,
+                )
             } else {
                 ReachResponse::unreachable(req.request_id, req.target_peer_id, is_public)
             }
@@ -6624,7 +6782,8 @@ async fn handle_relay_message_standalone(
                             Ok(Ok(_)) => {
                                 info!(
                                     "HOLE-PUNCH SUCCESS! Connected to {} at {}",
-                                    &requester_hex_for_spawn[..8.min(requester_hex_for_spawn.len())],
+                                    &requester_hex_for_spawn
+                                        [..8.min(requester_hex_for_spawn.len())],
                                     addr
                                 );
                                 return;
@@ -6632,7 +6791,8 @@ async fn handle_relay_message_standalone(
                             Ok(Err(e)) => {
                                 debug!(
                                     "Punch to {} at {} failed: {}",
-                                    &requester_hex_for_spawn[..8.min(requester_hex_for_spawn.len())],
+                                    &requester_hex_for_spawn
+                                        [..8.min(requester_hex_for_spawn.len())],
                                     addr,
                                     e
                                 );
@@ -6640,7 +6800,8 @@ async fn handle_relay_message_standalone(
                             Err(_) => {
                                 debug!(
                                     "Punch to {} at {} timed out",
-                                    &requester_hex_for_spawn[..8.min(requester_hex_for_spawn.len())],
+                                    &requester_hex_for_spawn
+                                        [..8.min(requester_hex_for_spawn.len())],
                                     addr
                                 );
                             }

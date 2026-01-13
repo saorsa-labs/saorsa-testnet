@@ -168,9 +168,9 @@ dependencies = [
 
 [[package]]
 name = "ant-quic"
-version = "0.15.2"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e0934fe2961be36724ee499c4ed1c49a531797a5a5e3348416b8589b46910fb"
+checksum = "66159291b2b999830a9e1e9a869af6362f425be9320f4ee10208f2dda6dab999"
 dependencies = [
  "anyhow",
  "aws-lc-rs",
@@ -3069,9 +3069,9 @@ dependencies = [
 
 [[package]]
 name = "saorsa-gossip-coordinator"
-version = "0.1.22"
+version = "0.1.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d77fb04b4625108bb2d71111b467bfe3603e8dc366afe9850b5ed6513ff50b7"
+checksum = "bb6bdd8e77fdf9f5cdaf303b13e91dab5a590495530c1af8dc1568025fe6116a"
 dependencies = [
  "anyhow",
  "bincode 1.3.3",
@@ -3090,9 +3090,9 @@ dependencies = [
 
 [[package]]
 name = "saorsa-gossip-crdt-sync"
-version = "0.1.22"
+version = "0.1.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b5ab531978dbc289325ebdc9ab147dd86706611de78100aaff93d02e9bc24dd"
+checksum = "4d2194368c2fb004ff7da324552bb23753362169292d821ae2b5fe47e3871610"
 dependencies = [
  "anyhow",
  "blake3",
@@ -3105,9 +3105,9 @@ dependencies = [
 
 [[package]]
 name = "saorsa-gossip-groups"
-version = "0.1.22"
+version = "0.1.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "99df0a0b54c231dbeb93c414ec770ae7bf854367b4556e994511e5da26e14add"
+checksum = "05a76ebabfcc62cc799067ef628cb7c816aef3d95e65c961dba8bcc3adee24a4"
 dependencies = [
  "anyhow",
  "blake3",
@@ -3119,9 +3119,9 @@ dependencies = [
 
 [[package]]
 name = "saorsa-gossip-identity"
-version = "0.1.22"
+version = "0.1.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef1ce1dd9f1f6770f8ea3d910394a5e8cccd4968638eb327afd918ea01e30eef"
+checksum = "3feae00128e810e919fe3c143f60707bbff9d42275fb060030d7c61fd54577a6"
 dependencies = [
  "anyhow",
  "bincode 1.3.3",
@@ -3134,9 +3134,9 @@ dependencies = [
 
 [[package]]
 name = "saorsa-gossip-membership"
-version = "0.1.22"
+version = "0.1.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f50bfd5604530f70c9ede0c9942e23385911fc2e7c24510f7bf03f138889a9e6"
+checksum = "ccedce17753c6eb0a4111462ce8e25955113db0fe2844bff7d6a69873706e6fb"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3152,9 +3152,9 @@ dependencies = [
 
 [[package]]
 name = "saorsa-gossip-pubsub"
-version = "0.1.22"
+version = "0.1.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bec53c011a5659b62c505f90cd7a8f17fa0e90b98282c6f4346a047cfcc7569f"
+checksum = "13e712b958f16ab98c5770524d99dcdc965ba78502265959ea55a522748cdd7b"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3174,9 +3174,9 @@ dependencies = [
 
 [[package]]
 name = "saorsa-gossip-rendezvous"
-version = "0.1.22"
+version = "0.1.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e5432048af23c63ecd1b13c260ac3a86c7e94f203dafad421b8f5b8feccfde88"
+checksum = "a03f22a14db604778e02d8409a7c33db1c13aa0b15d07f8b28066942ebf59503"
 dependencies = [
  "anyhow",
  "blake3",
@@ -3190,11 +3190,11 @@ dependencies = [
 
 [[package]]
 name = "saorsa-gossip-transport"
-version = "0.1.22"
+version = "0.1.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e1f522dd29dae6609c60ee09566f8706c4d056f6629b70980727ee16c677d20"
+checksum = "627e78b78592d203c486e76202ba3c3ccb03a8ee123d267754ddd7735363acb7"
 dependencies = [
- "ant-quic 0.15.2",
+ "ant-quic 0.16.0",
  "anyhow",
  "async-trait",
  "bincode 1.3.3",
@@ -3211,9 +3211,9 @@ dependencies = [
 
 [[package]]
 name = "saorsa-gossip-types"
-version = "0.1.22"
+version = "0.1.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e9e70503e69d58626d34d913eca9006145969a12222da8b619a4e4e6d674ea0"
+checksum = "1dcc1676eb06106095dee5109f8485e480701853c8544fc8ef074a22a7b8f12d"
 dependencies = [
  "anyhow",
  "blake3",
@@ -3300,7 +3300,7 @@ dependencies = [
 name = "saorsa-quic-test"
 version = "0.1.0"
 dependencies = [
- "ant-quic 0.15.2",
+ "ant-quic 0.16.0",
  "anyhow",
  "async-trait",
  "axum",
@@ -3331,6 +3331,7 @@ dependencies = [
  "saorsa-gossip-rendezvous",
  "saorsa-gossip-transport",
  "saorsa-gossip-types",
+ "saorsa-transport",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -3342,6 +3343,22 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "warp",
+]
+
+[[package]]
+name = "saorsa-transport"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac1fb27fc0123b8473a1887de9523b2b01a0771947720cc074c3ed45abf18706"
+dependencies = [
+ "ant-quic 0.16.0",
+ "async-trait",
+ "bytes",
+ "futures",
+ "serde",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

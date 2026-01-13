@@ -99,12 +99,7 @@ pub fn dashboard_routes(
 
     // Combine routes in groups to avoid type recursion issues
     // Box intermediate groups to break the deeply nested Or<Or<Or<...>>> type chain
-    let pages = index
-        .or(overview)
-        .or(gossip)
-        .or(matrix)
-        .or(log)
-        .boxed();
+    let pages = index.or(overview).or(gossip).or(matrix).or(log).boxed();
 
     let api = api_stats
         .or(api_peers)

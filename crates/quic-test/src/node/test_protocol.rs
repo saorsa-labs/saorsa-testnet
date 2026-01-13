@@ -8,11 +8,23 @@
 //! - REACH_RESPONSE: Reply with reachability status
 //! - RELAY_PUNCH_ME_NOW: Forward PUNCH_ME_NOW via relay
 //! - RELAY_ACK: Acknowledge relay request
+//!
+//! ## Protocol Multiplexing
+//!
+//! This module uses `saorsa-transport` StreamType for protocol identification.
+//! Stream types follow the unified transport convention:
+//! - Gossip protocols: 0x00-0x0F
+//! - DHT protocols: 0x10-0x1F
+//! - WebRTC protocols: 0x20-0x2F
+//! - Test/NAT protocols: Uses gossip bulk stream type (0x02)
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
+
+// Unified transport types for protocol multiplexing
+use saorsa_transport::StreamType;
 
 /// Size of test packet payload (approximately 5KB total with headers).
 pub const TEST_PAYLOAD_SIZE: usize = 5000;
@@ -187,6 +199,31 @@ fn current_timestamp_ns() -> u64 {
 
 /// Magic bytes to identify relay protocol messages.
 pub const RELAY_MAGIC: [u8; 4] = *b"RLAY";
+
+/// Get the StreamType for relay/NAT traversal protocol messages.
+/// Uses `GossipBulk` (0x02) since NAT coordination flows through the gossip layer.
+#[must_use]
+pub fn relay_stream_type() -> StreamType {
+    StreamType::GossipBulk
+}
+
+/// Get the StreamType for test packet protocol.
+/// Test packets use membership stream type for direct peer-to-peer testing.
+#[must_use]
+#[allow(dead_code)] // Prepared for future saorsa-transport integration
+pub fn test_packet_stream_type() -> StreamType {
+    StreamType::Membership
+}
+
+/// Check if a StreamType is a gossip protocol.
+#[must_use]
+#[allow(dead_code)] // Prepared for future saorsa-transport integration
+pub fn is_gossip_stream_type(stream_type: StreamType) -> bool {
+    matches!(
+        stream_type,
+        StreamType::Membership | StreamType::PubSub | StreamType::GossipBulk
+    )
+}
 
 /// Relay protocol message types.
 #[derive(Debug, Clone, Serialize, Deserialize)]

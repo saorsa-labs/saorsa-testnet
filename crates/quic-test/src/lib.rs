@@ -178,3 +178,10 @@ pub use lib_verification::{
     LibraryVerificationResult, TestResult as LibTestResult, TestStatus as LibTestStatus,
     VerificationConfig, print_summary as print_verification_summary, verify_all_libraries,
 };
+
+// Re-export saorsa-transport types for unified transport abstraction
+pub use saorsa_transport::{
+    BoxedHandler, Capabilities, ConnectionStats, LinkConn, LinkEvent, LinkRecvStream,
+    LinkSendStream, LinkTransport, PeerId, ProtocolHandler, ProtocolHandlerExt, ProtocolId,
+    SharedTransport, StreamFilter, StreamType, StreamTypeFamily, TransportError, TransportResult,
+};
