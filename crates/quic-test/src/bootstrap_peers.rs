@@ -130,9 +130,7 @@ pub const BOOTSTRAP_PEERS: &[BootstrapPeer] = &[
         name: "saorsa-3",
         dns_name: "full-cone-2.saorsalabs.com",
         ipv4: Ipv4Addr::new(147, 182, 234, 192),
-        ipv6: Some(Ipv6Addr::new(
-            0x2604, 0xa880, 0x0004, 0x01d0, 0, 0x0001, 0x6ba1, 0xf000,
-        )),
+        ipv6: None, // Disabled - VPS nodes lack IPv6 connectivity
         port: 9000,
         is_relay: false,
         is_coordinator: true,
@@ -144,9 +142,7 @@ pub const BOOTSTRAP_PEERS: &[BootstrapPeer] = &[
         name: "saorsa-4",
         dns_name: "addr-rest-1.saorsalabs.com",
         ipv4: Ipv4Addr::new(206, 189, 7, 117),
-        ipv6: Some(Ipv6Addr::new(
-            0x2a03, 0xb0c0, 0x0002, 0x00f0, 0, 0x0001, 0x26a1, 0x8001,
-        )),
+        ipv6: None, // Disabled - VPS nodes lack IPv6 connectivity
         port: 9000,
         is_relay: false,
         is_coordinator: true,
