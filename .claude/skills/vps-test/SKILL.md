@@ -321,6 +321,51 @@ brew install zig
 
 ---
 
+## Cross-Compilation Strategy
+
+When building from macOS (especially ARM/Apple Silicon), cross-compilation for Linux x86_64
+often fails due to C dependencies (ring, openssl). When cargo-zigbuild fails:
+
+1. Push code to GitHub
+2. SSH to saorsa-1 (77.42.75.115) and build natively:
+   ```bash
+   ssh root@77.42.75.115 'source ~/.cargo/env && cd ~/saorsa-testnet && git pull && cargo build --release'
+   ```
+3. Download binary and distribute to other VPS nodes
+
+**Note:** saorsa-1 has Rust toolchain installed and the saorsa-testnet repo cloned.
+
+---
+
+## Binary Distribution
+
+After building on saorsa-1 (when cross-compilation fails):
+
+1. **Copy to local:**
+   ```bash
+   scp root@77.42.75.115:/root/saorsa-testnet/target/release/saorsa-quic-test /tmp/claude/ant-quic-test-linux
+   ```
+
+2. **Stop running processes on all VPS (required before overwriting):**
+   ```bash
+   for ip in 138.197.29.195 162.243.167.201 159.65.221.230 67.205.158.158 161.35.231.80 178.62.192.11 159.65.90.128; do
+       ssh root@$ip "pkill -9 ant-quic" &
+   done
+   wait
+   ```
+
+3. **Distribute to all VPS (parallel):**
+   ```bash
+   for ip in 138.197.29.195 162.243.167.201 159.65.221.230 67.205.158.158 161.35.231.80 178.62.192.11 159.65.90.128; do
+       scp /tmp/claude/ant-quic-test-linux root@$ip:/usr/local/bin/ant-quic-test &
+   done
+   wait
+   ```
+
+**Important:** Binary must be stopped before overwriting - "dest open: Failure" errors occur if the binary is running.
+
+---
+
 ## Test Loop State Machine
 
 ```
