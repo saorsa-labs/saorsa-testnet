@@ -77,6 +77,10 @@ pub struct TestNodeConfig {
     ///
     /// This is the recommended mode for production and testing.
     pub gossip_first: bool,
+    /// Custom data directory for identity keypair and peer cache storage.
+    /// If None, uses the default platform-specific data directory.
+    /// Each node instance should use a unique data directory to have a unique peer ID.
+    pub data_dir: Option<PathBuf>,
 }
 
 impl Default for TestNodeConfig {
@@ -95,6 +99,8 @@ impl Default for TestNodeConfig {
             local_only: false,
             // Gossip-first mode enabled by default (use epidemic gossip for peer discovery)
             gossip_first: true,
+            // Use default data directory (platform-specific)
+            data_dir: None,
         }
     }
 }
@@ -402,21 +408,26 @@ pub struct TestNode {
 }
 
 /// Get the data directory for persistent storage.
-fn get_data_dir() -> PathBuf {
-    dirs::data_local_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("ant-quic-test")
+/// If `custom_dir` is provided, uses that instead of the default platform directory.
+fn get_data_dir(custom_dir: Option<&PathBuf>) -> PathBuf {
+    if let Some(dir) = custom_dir {
+        dir.clone()
+    } else {
+        dirs::data_local_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("ant-quic-test")
+    }
 }
 
 /// Get the path to the keypair file.
-fn keypair_path() -> PathBuf {
-    get_data_dir().join("identity_keypair.bin")
+fn keypair_path(custom_dir: Option<&PathBuf>) -> PathBuf {
+    get_data_dir(custom_dir).join("identity_keypair.bin")
 }
 
 /// Load or generate a persistent ML-DSA-65 keypair.
 /// The keypair is stored in the data directory to maintain stable peer ID across restarts.
-fn load_or_generate_keypair() -> Result<(MlDsaPublicKey, MlDsaSecretKey), anyhow::Error> {
-    let path = keypair_path();
+fn load_or_generate_keypair(custom_dir: Option<&PathBuf>) -> Result<(MlDsaPublicKey, MlDsaSecretKey), anyhow::Error> {
+    let path = keypair_path(custom_dir);
 
     // Try to load existing keypair
     if path.exists() {
@@ -461,13 +472,13 @@ fn load_or_generate_keypair() -> Result<(MlDsaPublicKey, MlDsaSecretKey), anyhow
         .map_err(|e| anyhow::anyhow!("Failed to generate keypair: {:?}", e))?;
 
     // Save the keypair
-    if let Err(e) = save_keypair(&public_key, &secret_key) {
+    if let Err(e) = save_keypair(&public_key, &secret_key, custom_dir) {
         warn!(
             "Failed to save keypair: {} (peer ID will change on restart)",
             e
         );
     } else {
-        info!("Saved new keypair to {:?}", keypair_path());
+        info!("Saved new keypair to {:?}", keypair_path(custom_dir));
     }
 
     Ok((public_key, secret_key))
@@ -477,8 +488,9 @@ fn load_or_generate_keypair() -> Result<(MlDsaPublicKey, MlDsaSecretKey), anyhow
 fn save_keypair(
     public_key: &MlDsaPublicKey,
     secret_key: &MlDsaSecretKey,
+    custom_dir: Option<&PathBuf>,
 ) -> Result<(), anyhow::Error> {
-    let path = keypair_path();
+    let path = keypair_path(custom_dir);
 
     // Create parent directory if needed
     if let Some(parent) = path.parent() {
@@ -516,7 +528,7 @@ impl TestNode {
 
         info!("Creating unified QUIC endpoint via gossip transport...");
 
-        let (public_key, secret_key) = load_or_generate_keypair()?;
+        let (public_key, secret_key) = load_or_generate_keypair(config.data_dir.as_ref())?;
         let keypair_bytes = (
             public_key.as_bytes().to_vec(),
             secret_key.as_bytes().to_vec(),
@@ -662,9 +674,7 @@ impl TestNode {
         let (gossip_event_tx, gossip_event_rx) = mpsc::channel(100);
         let gossip_config = GossipConfig {
             cache_path: Some(
-                dirs::data_dir()
-                    .unwrap_or_else(|| std::path::PathBuf::from("."))
-                    .join("ant-quic-test")
+                get_data_dir(config.data_dir.as_ref())
                     .join("peer_cache.cbor"),
             ),
             ..GossipConfig::default()
@@ -6015,8 +6025,14 @@ impl TestNode {
                 status.last_proof_time = Some(std::time::Instant::now());
                 status.session_id = Some(report.session_id.clone());
 
-                // Connectivity
-                status.connectivity_pass = report.passed;
+                // Connectivity - extract the specific step result (not overall)
+                // Note: Connectivity always passes due to relay fallback
+                status.connectivity_pass = report
+                    .step_results
+                    .iter()
+                    .find(|r| r.name == "connectivity")
+                    .map(|r| r.passed)
+                    .unwrap_or(true);
                 let connected_count = total_nodes.saturating_sub(1); // excluding ourselves
                 status.connectivity_nodes = (connected_count, total_nodes);
 

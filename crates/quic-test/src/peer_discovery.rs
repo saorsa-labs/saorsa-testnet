@@ -13,7 +13,7 @@
 use ant_quic::bootstrap_cache::{
     BootstrapCache, BootstrapCacheConfig, CachedPeer, NatType as CacheNatType, PeerSource,
 };
-use saorsa_transport::PeerId;
+use ant_quic::PeerId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::net::SocketAddr;

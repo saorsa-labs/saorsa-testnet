@@ -43,7 +43,7 @@ use saorsa_gossip_membership::{HyParViewMembership, Membership, PeerState};
 use saorsa_gossip_pubsub::{PlumtreePubSub, PubSub};
 use saorsa_gossip_rendezvous::{Capability, ProviderSummary};
 use saorsa_gossip_transport::{
-    AntQuicTransport, AntQuicTransportConfig, GossipTransport, StreamType,
+    AntQuicTransport, AntQuicTransportConfig, GossipStreamType, GossipTransport,
 };
 use saorsa_gossip_types::{PeerId, TopicId};
 use serde::{Deserialize, Serialize};
@@ -1628,7 +1628,7 @@ impl EpidemicGossip {
         };
 
         transport
-            .send_to_peer(peer_id, StreamType::Bulk, Bytes::from(data))
+            .send_to_peer(peer_id, GossipStreamType::Bulk, Bytes::from(data))
             .await
             .map_err(|e| GossipError::Transport(e.to_string()))?;
 

@@ -291,12 +291,12 @@ pub async fn test_transport_crate() -> CrateTestResult {
 }
 
 fn test_stream_type_variants() -> Result<(), String> {
-    use saorsa_gossip_transport::StreamType;
+    use saorsa_gossip_transport::GossipStreamType;
 
     // Verify the 3 control stream types exist
-    let membership = StreamType::Membership;
-    let pubsub = StreamType::PubSub;
-    let bulk = StreamType::Bulk;
+    let membership = GossipStreamType::Membership;
+    let pubsub = GossipStreamType::PubSub;
+    let bulk = GossipStreamType::Bulk;
 
     // They should be different (compare discriminants)
     if std::mem::discriminant(&membership) == std::mem::discriminant(&pubsub) {

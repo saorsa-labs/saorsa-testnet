@@ -179,9 +179,10 @@ pub use lib_verification::{
     VerificationConfig, print_summary as print_verification_summary, verify_all_libraries,
 };
 
-// Re-export saorsa-transport types for unified transport abstraction
-pub use saorsa_transport::{
+// Re-export ant-quic types for unified transport abstraction
+pub use ant_quic::{
     BoxedHandler, Capabilities, ConnectionStats, LinkConn, LinkEvent, LinkRecvStream,
     LinkSendStream, LinkTransport, PeerId, ProtocolHandler, ProtocolHandlerExt, ProtocolId,
-    SharedTransport, StreamFilter, StreamType, StreamTypeFamily, TransportError, TransportResult,
+    SharedTransport, StreamFilter, StreamType, StreamTypeFamily, TransportError,
 };
+pub use saorsa_gossip_transport::GossipStreamType;

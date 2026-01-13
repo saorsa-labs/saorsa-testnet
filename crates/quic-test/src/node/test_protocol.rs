@@ -24,7 +24,7 @@ use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 // Unified transport types for protocol multiplexing
-use saorsa_transport::StreamType;
+use ant_quic::StreamType;
 
 /// Size of test packet payload (approximately 5KB total with headers).
 pub const TEST_PAYLOAD_SIZE: usize = 5000;

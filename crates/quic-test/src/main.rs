@@ -13,6 +13,7 @@ use saorsa_quic_test::{
     tui::{App, TuiEvent, run_tui},
 };
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use tokio::sync::mpsc;
 
 /// Command-line arguments for the test network binary.
@@ -40,6 +41,8 @@ struct Args {
     min_proof_nodes: usize,
     /// Gossip-first mode: Use epidemic gossip for peer discovery instead of registry
     gossip_first: bool,
+    /// Custom data directory for identity and cache storage (enables unique identities per node)
+    data_dir: Option<PathBuf>,
 }
 
 impl Default for Args {
@@ -56,6 +59,7 @@ impl Default for Args {
             local_only: false, // Disabled by default - connect to external VPS nodes
             min_proof_nodes: 2,
             gossip_first: true, // Enabled by default - use epidemic gossip for peer discovery
+            data_dir: None,     // Use default platform data directory
         }
     }
 }
@@ -112,6 +116,11 @@ fn parse_args() -> Args {
                     }
                 }
             }
+            "--data-dir" => {
+                if let Some(dir) = argv.next() {
+                    args.data_dir = Some(PathBuf::from(dir));
+                }
+            }
             "-h" | "--help" => {
                 print_help();
                 std::process::exit(0);
@@ -149,6 +158,7 @@ OPTIONS:
     --local-only            Disable external VPS connections (for Docker/local testing)
     --gossip-first          Use epidemic gossip for peer discovery (default: enabled)
     --no-gossip-first       Use registry-based peer discovery instead of gossip
+    --data-dir <DIR>        Custom data directory for identity storage (enables unique node IDs)
     -q, --quiet             Disable TUI, log mode only
     -h, --help              Print this help message
 
@@ -162,9 +172,9 @@ EXAMPLES:
     # Run proof-based verification test
     ant-quic-test --proof-test --registry-url https://saorsa-1.saorsalabs.com
 
-    # Run multiple local instances (each on different random ports)
-    ant-quic-test &
-    ant-quic-test &
+    # Run multiple local instances with unique identities
+    ant-quic-test --data-dir /tmp/node-1 &
+    ant-quic-test --data-dir /tmp/node-2 &
 
     # Run on specific port
     ant-quic-test --bind-port 9001
@@ -257,6 +267,7 @@ async fn main() -> anyhow::Result<()> {
             bind_addr,
             local_only: args.local_only,
             gossip_first: args.gossip_first,
+            data_dir: args.data_dir.clone(),
             ..Default::default()
         };
 
