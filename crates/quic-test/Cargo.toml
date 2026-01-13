@@ -79,8 +79,7 @@ saorsa-gossip-crdt-sync.workspace = true
 saorsa-gossip-groups.workspace = true
 saorsa-gossip-rendezvous.workspace = true
 
-# DHT and network layers for full node testing
-saorsa-node.workspace = true
+# Core types for health status conversion
 saorsa-core.workspace = true
 
 # Timestamp handling for history persistence

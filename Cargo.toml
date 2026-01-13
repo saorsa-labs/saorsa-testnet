@@ -29,9 +29,8 @@ saorsa-gossip-crdt-sync = "0.2"
 saorsa-gossip-groups = "0.2"
 saorsa-gossip-rendezvous = "0.2"
 
-# DHT and network layers (path deps until published)
-saorsa-node = { path = "../saorsa-node" }
-saorsa-core = { path = "../saorsa-core" }
+# Core types for health status
+saorsa-core = "0.9"
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
