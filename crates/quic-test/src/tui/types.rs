@@ -1682,6 +1682,750 @@ pub struct GeographicDistribution {
     pub total_peers: usize,
 }
 
+// ============================================================================
+// NEW TYPES FOR EXPANDED TUI SCREENS
+// ============================================================================
+
+// These types are defined for the new TUI screens and will be used once
+// the screen implementations are complete.
+
+/// DHT statistics for the DHT tab [5].
+/// Displays routing table, operations, latency, and stored records.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default)]
+pub struct DhtStats {
+    /// Number of peers in routing table by k-bucket distance
+    pub k_buckets: Vec<usize>,
+    /// Total peers in routing table
+    pub total_routing_peers: usize,
+    /// DHT operation counts
+    pub operations: DhtOperationStats,
+    /// Operation latency statistics
+    pub latency: LatencyStats,
+    /// Number of records stored locally
+    pub stored_records: usize,
+    /// Records by type (for breakdown display)
+    pub records_by_type: std::collections::HashMap<String, usize>,
+    /// Replication factor (target copies)
+    pub replication_factor: usize,
+    /// Last refresh time
+    pub last_refresh: Option<Instant>,
+    /// Node's distance from various keys (for k-bucket visualization)
+    pub distance_samples: Vec<u8>,
+}
+
+/// DHT operation counters.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default)]
+pub struct DhtOperationStats {
+    /// GET operations
+    pub gets: u64,
+    /// GET successes
+    pub get_successes: u64,
+    /// PUT operations
+    pub puts: u64,
+    /// PUT successes
+    pub put_successes: u64,
+    /// DELETE operations
+    pub deletes: u64,
+    /// DELETE successes
+    pub delete_successes: u64,
+    /// Routing queries
+    pub routing_queries: u64,
+    /// Routing query successes
+    pub routing_successes: u64,
+}
+
+#[allow(dead_code)]
+impl DhtOperationStats {
+    /// Get overall success rate.
+    pub fn success_rate(&self) -> f64 {
+        let total = self.gets + self.puts + self.deletes;
+        let successes = self.get_successes + self.put_successes + self.delete_successes;
+        if total == 0 {
+            100.0
+        } else {
+            (successes as f64 / total as f64) * 100.0
+        }
+    }
+}
+
+/// Latency statistics with percentiles.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default)]
+pub struct LatencyStats {
+    /// Minimum latency in ms
+    pub min_ms: u32,
+    /// Maximum latency in ms
+    pub max_ms: u32,
+    /// Average latency in ms
+    pub avg_ms: f64,
+    /// P50 latency in ms
+    pub p50_ms: u32,
+    /// P95 latency in ms
+    pub p95_ms: u32,
+    /// P99 latency in ms
+    pub p99_ms: u32,
+    /// Sample count
+    pub samples: u64,
+    /// Recent latency history (for sparkline)
+    pub history: Vec<u32>,
+}
+
+#[allow(dead_code)]
+impl LatencyStats {
+    /// Add a latency sample.
+    pub fn record(&mut self, latency_ms: u32) {
+        self.samples += 1;
+        if latency_ms < self.min_ms || self.samples == 1 {
+            self.min_ms = latency_ms;
+        }
+        if latency_ms > self.max_ms {
+            self.max_ms = latency_ms;
+        }
+        // Rolling average
+        self.avg_ms =
+            ((self.avg_ms * (self.samples - 1) as f64) + latency_ms as f64) / self.samples as f64;
+        // Keep last 60 samples for sparkline
+        self.history.push(latency_ms);
+        if self.history.len() > 60 {
+            self.history.remove(0);
+        }
+    }
+}
+
+/// EigenTrust statistics for the Trust tab [6].
+/// Displays trust scores, node statistics, and trust evolution.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default)]
+pub struct EigenTrustStats {
+    /// Local node's global trust score (0.0 - 1.0)
+    pub local_trust_score: f64,
+    /// Trust scores for known peers (peer_id -> score)
+    pub peer_trust_scores: Vec<TrustEntry>,
+    /// Number of iterations to convergence
+    pub convergence_iterations: u32,
+    /// Whether trust has converged
+    pub converged: bool,
+    /// Pre-trusted peers count
+    pub pre_trusted_count: usize,
+    /// Suspicious peers (below threshold)
+    pub suspicious_count: usize,
+    /// Trust threshold for marking suspicious
+    pub trust_threshold: f64,
+    /// Trust evolution history (for chart)
+    pub trust_history: Vec<f64>,
+    /// Last update time
+    pub last_update: Option<Instant>,
+}
+
+/// Individual peer trust entry.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct TrustEntry {
+    /// Short peer ID
+    pub short_id: String,
+    /// Full peer ID
+    pub peer_id: String,
+    /// Trust score (0.0 - 1.0)
+    pub score: f64,
+    /// Whether this peer is pre-trusted
+    pub pre_trusted: bool,
+    /// Whether below suspicion threshold
+    pub suspicious: bool,
+    /// Transaction count with this peer
+    pub transactions: u64,
+}
+
+#[allow(dead_code)]
+impl TrustEntry {
+    /// Get trust level as a category.
+    pub fn trust_level(&self) -> TrustLevel {
+        if self.score >= 0.8 {
+            TrustLevel::High
+        } else if self.score >= 0.5 {
+            TrustLevel::Medium
+        } else if self.score >= 0.2 {
+            TrustLevel::Low
+        } else {
+            TrustLevel::Untrusted
+        }
+    }
+}
+
+/// Trust level categories.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrustLevel {
+    High,
+    Medium,
+    Low,
+    Untrusted,
+}
+
+#[allow(dead_code)]
+impl TrustLevel {
+    /// Get color for display.
+    pub fn color_name(&self) -> &'static str {
+        match self {
+            Self::High => "green",
+            Self::Medium => "yellow",
+            Self::Low => "orange",
+            Self::Untrusted => "red",
+        }
+    }
+
+    /// Get symbol for display.
+    pub fn symbol(&self) -> &'static str {
+        match self {
+            Self::High => "●●●",
+            Self::Medium => "●●○",
+            Self::Low => "●○○",
+            Self::Untrusted => "○○○",
+        }
+    }
+}
+
+/// Adaptive network statistics for the Adaptive tab [7].
+/// Displays Thompson Sampling, Q-Learning, and churn predictions.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default)]
+pub struct AdaptiveStats {
+    /// Thompson Sampling arm statistics
+    pub thompson_sampling: ThompsonSamplingStats,
+    /// Q-Learning statistics
+    pub q_learning: QLearningStats,
+    /// Churn prediction statistics
+    pub churn_prediction: ChurnPredictionStats,
+    /// Overall adaptive strategy performance
+    pub strategy_performance: StrategyPerformance,
+}
+
+/// Thompson Sampling arm statistics.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default)]
+pub struct ThompsonSamplingStats {
+    /// Per-arm statistics
+    pub arms: Vec<ArmStats>,
+    /// Total pulls across all arms
+    pub total_pulls: u64,
+    /// Current best arm index
+    pub best_arm: Option<usize>,
+    /// Exploration vs exploitation ratio
+    pub exploration_ratio: f64,
+}
+
+/// Individual arm statistics.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct ArmStats {
+    /// Arm name/identifier
+    pub name: String,
+    /// Success count (alpha - 1)
+    pub successes: u64,
+    /// Failure count (beta - 1)
+    pub failures: u64,
+    /// Estimated reward probability
+    pub estimated_prob: f64,
+    /// Number of times pulled
+    pub pulls: u64,
+}
+
+#[allow(dead_code)]
+impl ArmStats {
+    /// Calculate success rate.
+    pub fn success_rate(&self) -> f64 {
+        if self.pulls == 0 {
+            0.0
+        } else {
+            (self.successes as f64 / self.pulls as f64) * 100.0
+        }
+    }
+}
+
+/// Q-Learning statistics.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default)]
+pub struct QLearningStats {
+    /// Number of states
+    pub state_count: usize,
+    /// Number of actions
+    pub action_count: usize,
+    /// Cache hit rate
+    pub cache_hit_rate: f64,
+    /// Cache miss rate
+    pub cache_miss_rate: f64,
+    /// Learning rate (alpha)
+    pub learning_rate: f64,
+    /// Discount factor (gamma)
+    pub discount_factor: f64,
+    /// Exploration rate (epsilon)
+    pub epsilon: f64,
+    /// Total episodes
+    pub episodes: u64,
+    /// Average reward
+    pub avg_reward: f64,
+}
+
+/// Churn prediction statistics.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default)]
+pub struct ChurnPredictionStats {
+    /// Peers predicted to churn soon
+    pub at_risk_peers: Vec<ChurnRiskEntry>,
+    /// Prediction accuracy (historical)
+    pub accuracy: f64,
+    /// Total predictions made
+    pub predictions: u64,
+    /// Correct predictions
+    pub correct: u64,
+    /// False positives
+    pub false_positives: u64,
+    /// False negatives
+    pub false_negatives: u64,
+}
+
+/// Churn risk entry for a peer.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct ChurnRiskEntry {
+    /// Short peer ID
+    pub short_id: String,
+    /// Churn probability (0.0 - 1.0)
+    pub risk: f64,
+    /// Time until predicted churn
+    pub time_to_churn: Option<Duration>,
+    /// Risk level
+    pub level: ChurnRiskLevel,
+}
+
+/// Churn risk levels.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChurnRiskLevel {
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+#[allow(dead_code)]
+impl ChurnRiskLevel {
+    /// Get color for display.
+    pub fn color_name(&self) -> &'static str {
+        match self {
+            Self::Low => "green",
+            Self::Medium => "yellow",
+            Self::High => "orange",
+            Self::Critical => "red",
+        }
+    }
+}
+
+/// Strategy performance comparison.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default)]
+pub struct StrategyPerformance {
+    /// Thompson Sampling performance score
+    pub thompson_score: f64,
+    /// Q-Learning performance score
+    pub qlearning_score: f64,
+    /// Random baseline score
+    pub random_score: f64,
+    /// Currently active strategy
+    pub active_strategy: String,
+}
+
+/// Placement statistics for the Placement tab [8].
+/// Displays diversity scores and regional distribution.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default)]
+pub struct PlacementStats {
+    /// Geographic diversity score (0.0 - 1.0)
+    pub geographic_diversity: f64,
+    /// Rack diversity score (0.0 - 1.0)
+    pub rack_diversity: f64,
+    /// Network diversity score (0.0 - 1.0)
+    pub network_diversity: f64,
+    /// Overall diversity score
+    pub overall_diversity: f64,
+    /// Regional distribution
+    pub regions: Vec<RegionStats>,
+    /// Placement success rate
+    pub placement_success_rate: f64,
+    /// Total placement operations
+    pub total_placements: u64,
+    /// Replicas placed successfully
+    pub successful_placements: u64,
+    /// Placement failures
+    pub failed_placements: u64,
+    /// Placement retries
+    pub placement_retries: u64,
+    /// Current replication targets
+    pub replication_targets: Vec<String>,
+    /// Target replica count
+    pub target_replicas: u32,
+    /// Minimum regions for placement
+    pub min_regions: u32,
+    /// Average replica count achieved
+    pub avg_replica_count: f64,
+    /// Count of under-replicated data
+    pub under_replicated_count: u64,
+}
+
+/// Regional distribution entry.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct RegionStats {
+    /// Region/country code
+    pub code: String,
+    /// Region name
+    pub name: String,
+    /// Country flag emoji
+    pub flag: String,
+    /// Number of nodes in region
+    pub node_count: usize,
+    /// Percentage of total nodes (data distribution)
+    pub data_percentage: f64,
+    /// Percentage of total nodes
+    pub percentage: f64,
+    /// Average latency to region
+    pub avg_latency_ms: f64,
+    /// Whether the region is healthy
+    pub healthy: bool,
+}
+
+/// Health statistics for the Health tab [9].
+/// Displays component health, anomalies, and alerts.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default)]
+pub struct HealthStats {
+    /// Overall health score (0.0 - 1.0)
+    pub overall_score: f64,
+    /// Overall health status
+    pub status: HealthStatus,
+    /// Component health states
+    pub components: Vec<ComponentHealth>,
+    /// Active alerts
+    pub alerts: Vec<HealthAlert>,
+    /// Recent anomalies
+    pub anomalies: Vec<AnomalyEntry>,
+    /// Resource usage
+    pub resources: ResourceUsage,
+    /// Last health check time
+    pub last_check: Option<Instant>,
+    /// System uptime in seconds
+    pub uptime_secs: u64,
+    /// Seconds since last health check
+    pub last_check_secs_ago: u64,
+}
+
+/// Overall health status.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HealthStatus {
+    #[default]
+    Unknown,
+    Healthy,
+    Degraded,
+    Unhealthy,
+    Critical,
+}
+
+#[allow(dead_code)]
+impl HealthStatus {
+    /// Get color for display.
+    pub fn color_name(&self) -> &'static str {
+        match self {
+            Self::Unknown => "gray",
+            Self::Healthy => "green",
+            Self::Degraded => "yellow",
+            Self::Unhealthy => "orange",
+            Self::Critical => "red",
+        }
+    }
+
+    /// Get symbol for display.
+    pub fn symbol(&self) -> &'static str {
+        match self {
+            Self::Unknown => "?",
+            Self::Healthy => "●",
+            Self::Degraded => "◐",
+            Self::Unhealthy => "◑",
+            Self::Critical => "✗",
+        }
+    }
+}
+
+/// Individual component health.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct ComponentHealth {
+    /// Component name
+    pub name: String,
+    /// Component status
+    pub status: HealthStatus,
+    /// Whether the component is healthy
+    pub healthy: bool,
+    /// Component uptime in seconds
+    pub uptime_secs: u64,
+    /// Last error message (if any)
+    pub last_error: Option<String>,
+    /// Status message
+    pub message: Option<String>,
+    /// Last check time
+    pub last_check: Option<Instant>,
+}
+
+/// Health alert entry.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct HealthAlert {
+    /// Alert severity
+    pub severity: AlertSeverity,
+    /// Alert message
+    pub message: String,
+    /// Component that triggered the alert
+    pub component: String,
+    /// When the alert was raised
+    pub timestamp: Instant,
+    /// Seconds since the alert was raised
+    pub timestamp_secs_ago: u64,
+    /// Whether the alert has been acknowledged
+    pub acknowledged: bool,
+}
+
+/// Alert severity levels.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlertSeverity {
+    Info,
+    Warning,
+    Error,
+    Critical,
+}
+
+#[allow(dead_code)]
+impl AlertSeverity {
+    /// Get color for display.
+    pub fn color_name(&self) -> &'static str {
+        match self {
+            Self::Info => "blue",
+            Self::Warning => "yellow",
+            Self::Error => "orange",
+            Self::Critical => "red",
+        }
+    }
+
+    /// Get symbol for display.
+    pub fn symbol(&self) -> &'static str {
+        match self {
+            Self::Info => "ℹ",
+            Self::Warning => "⚠",
+            Self::Error => "✗",
+            Self::Critical => "☠",
+        }
+    }
+}
+
+/// Anomaly detection entry.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct AnomalyEntry {
+    /// Anomaly type
+    pub anomaly_type: String,
+    /// Description
+    pub description: String,
+    /// Anomaly score (0.0 - 1.0, higher = more anomalous)
+    pub score: f64,
+    /// Deviation in standard deviations (sigma)
+    pub deviation: f64,
+    /// When detected
+    pub timestamp: Instant,
+    /// Related peer (if applicable)
+    pub peer_id: Option<String>,
+}
+
+/// Resource usage statistics.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default)]
+pub struct ResourceUsage {
+    /// CPU usage percentage (0.0 - 100.0)
+    pub cpu_percent: f64,
+    /// Memory usage percentage (0.0 - 100.0)
+    pub memory_percent: f64,
+    /// Memory used in bytes
+    pub memory_used_bytes: u64,
+    /// Total memory in bytes
+    pub memory_total_bytes: u64,
+    /// Disk usage percentage (0.0 - 100.0)
+    pub disk_percent: f64,
+    /// Disk used in bytes
+    pub disk_used_bytes: u64,
+    /// Total disk in bytes
+    pub disk_total_bytes: u64,
+    /// Network bandwidth usage (bytes/sec)
+    pub network_bytes_sec: u64,
+    /// Network utilization percentage (0.0 - 100.0)
+    pub network_utilization_percent: f64,
+    /// Network TX bytes per second
+    pub network_tx_bytes_sec: u64,
+    /// Network RX bytes per second
+    pub network_rx_bytes_sec: u64,
+    /// Open file descriptors
+    pub open_fds: u32,
+    /// Active connections
+    pub active_connections: u32,
+}
+
+/// MCP client state for the MCP tab [0].
+/// Displays connection, tools, and invocation history.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default)]
+pub struct McpState {
+    /// Connection status
+    pub connection: McpConnectionStatus,
+    /// Server information
+    pub server_info: Option<McpServerInfo>,
+    /// Available tools
+    pub tools: Vec<McpTool>,
+    /// Currently selected tool index
+    pub selected_tool: Option<usize>,
+    /// Parameter inputs for selected tool
+    pub parameter_inputs: std::collections::HashMap<String, String>,
+    /// Invocation history
+    pub history: Vec<McpInvocation>,
+    /// Last error message
+    pub last_error: Option<String>,
+    /// MCP endpoint URL
+    pub endpoint: Option<String>,
+}
+
+/// MCP connection status.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum McpConnectionStatus {
+    #[default]
+    Disconnected,
+    Connecting,
+    Connected,
+    Error,
+}
+
+#[allow(dead_code)]
+impl McpConnectionStatus {
+    /// Get color for display.
+    pub fn color_name(&self) -> &'static str {
+        match self {
+            Self::Disconnected => "gray",
+            Self::Connecting => "yellow",
+            Self::Connected => "green",
+            Self::Error => "red",
+        }
+    }
+
+    /// Get symbol for display.
+    pub fn symbol(&self) -> &'static str {
+        match self {
+            Self::Disconnected => "○",
+            Self::Connecting => "◌",
+            Self::Connected => "●",
+            Self::Error => "✗",
+        }
+    }
+}
+
+/// MCP server information.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct McpServerInfo {
+    /// Server name
+    pub name: String,
+    /// Server version
+    pub version: String,
+    /// Protocol version
+    pub protocol_version: String,
+    /// Server capabilities
+    pub capabilities: Vec<String>,
+}
+
+/// MCP tool definition.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct McpTool {
+    /// Tool name
+    pub name: String,
+    /// Tool description
+    pub description: String,
+    /// Input schema (JSON schema)
+    pub parameters: Vec<McpParameter>,
+}
+
+/// MCP tool parameter.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct McpParameter {
+    /// Parameter name
+    pub name: String,
+    /// Parameter type (string, number, boolean, etc.)
+    pub param_type: String,
+    /// Description (optional)
+    pub description: Option<String>,
+    /// Whether required
+    pub required: bool,
+    /// Default value (if any)
+    pub default: Option<String>,
+}
+
+/// MCP tool invocation record.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct McpInvocation {
+    /// Tool name
+    pub tool_name: String,
+    /// Parameters used
+    pub parameters: std::collections::HashMap<String, String>,
+    /// Result (success or error)
+    pub result: McpInvocationResult,
+    /// When invoked
+    pub timestamp: Instant,
+    /// Duration of invocation
+    pub duration: Duration,
+}
+
+/// MCP invocation result.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub enum McpInvocationResult {
+    /// Success with output
+    Success(String),
+    /// Error with message
+    Error(String),
+    /// Pending (still executing)
+    Pending,
+}
+
+#[allow(dead_code)]
+impl McpInvocationResult {
+    /// Get color for display.
+    pub fn color_name(&self) -> &'static str {
+        match self {
+            Self::Success(_) => "green",
+            Self::Error(_) => "red",
+            Self::Pending => "yellow",
+        }
+    }
+
+    /// Get symbol for display.
+    pub fn symbol(&self) -> &'static str {
+        match self {
+            Self::Success(_) => "✓",
+            Self::Error(_) => "✗",
+            Self::Pending => "⏳",
+        }
+    }
+}
+
 impl GeographicDistribution {
     /// Create new geographic distribution
     pub fn new() -> Self {

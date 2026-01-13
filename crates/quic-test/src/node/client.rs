@@ -426,7 +426,9 @@ fn keypair_path(custom_dir: Option<&PathBuf>) -> PathBuf {
 
 /// Load or generate a persistent ML-DSA-65 keypair.
 /// The keypair is stored in the data directory to maintain stable peer ID across restarts.
-fn load_or_generate_keypair(custom_dir: Option<&PathBuf>) -> Result<(MlDsaPublicKey, MlDsaSecretKey), anyhow::Error> {
+fn load_or_generate_keypair(
+    custom_dir: Option<&PathBuf>,
+) -> Result<(MlDsaPublicKey, MlDsaSecretKey), anyhow::Error> {
     let path = keypair_path(custom_dir);
 
     // Try to load existing keypair
@@ -673,10 +675,7 @@ impl TestNode {
         // Initialize gossip integration layer with bootstrap cache (created early for event handler)
         let (gossip_event_tx, gossip_event_rx) = mpsc::channel(100);
         let gossip_config = GossipConfig {
-            cache_path: Some(
-                get_data_dir(config.data_dir.as_ref())
-                    .join("peer_cache.cbor"),
-            ),
+            cache_path: Some(get_data_dir(config.data_dir.as_ref()).join("peer_cache.cbor")),
             ..GossipConfig::default()
         };
         let gossip_integration = Arc::new(GossipIntegration::new(

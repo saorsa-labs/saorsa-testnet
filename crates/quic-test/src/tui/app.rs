@@ -5,9 +5,10 @@
 
 use crate::gossip_tests::GossipTestResults;
 use crate::tui::types::{
-    CacheHealth, ConnectedPeer, ConnectionHistoryEntry, ConnectionStatus, ConnectivityTestResults,
-    FrameDirection, GeographicDistribution, LocalNodeInfo, NatTraversalPhase, NatTypeAnalytics,
-    NetworkStatistics, ProofStatus, ProtocolFrame, TestConnectivityMethod, TrafficType,
+    AdaptiveStats, CacheHealth, ConnectedPeer, ConnectionHistoryEntry, ConnectionStatus,
+    ConnectivityTestResults, DhtStats, EigenTrustStats, FrameDirection, GeographicDistribution,
+    HealthStats, LocalNodeInfo, McpState, NatTraversalPhase, NatTypeAnalytics, NetworkStatistics,
+    PlacementStats, ProofStatus, ProtocolFrame, TestConnectivityMethod, TrafficType,
 };
 use ratatui::widgets::TableState;
 use std::collections::{HashMap, HashSet};
@@ -25,15 +26,27 @@ pub enum AppState {
 /// TUI Tab for navigation between different views.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Tab {
-    /// Main overview (default - current layout)
+    /// Main overview (default - current layout) [1]
     #[default]
     Overview,
-    /// Detailed gossip health view for all 9 saorsa-gossip crates
+    /// Detailed gossip health view for all 9 saorsa-gossip crates [2]
     GossipHealth,
-    /// N×N peer connectivity matrix
+    /// N×N peer connectivity matrix [3]
     ConnectivityMatrix,
-    /// Protocol frame log (detailed message flow)
+    /// Protocol frame log (detailed message flow) [4]
     ProtocolLog,
+    /// DHT statistics and routing table [5]
+    Dht,
+    /// EigenTrust reputation scores [6]
+    EigenTrust,
+    /// Adaptive network (Thompson Sampling, Q-Learning) [7]
+    Adaptive,
+    /// Data placement and diversity [8]
+    Placement,
+    /// Overall node/network health [9]
+    Health,
+    /// MCP client for tool invocation [0]
+    Mcp,
 }
 
 /// Main TUI application state.
@@ -89,6 +102,19 @@ pub struct App {
     pub proof_status: ProofStatus,
     /// Show proof help overlay (press P to toggle)
     pub show_proof_help: bool,
+    // === New state for expanded TUI ===
+    /// DHT statistics for DHT tab [5]
+    pub dht_stats: DhtStats,
+    /// EigenTrust statistics for Trust tab [6]
+    pub eigentrust_stats: EigenTrustStats,
+    /// Adaptive network stats for Adaptive tab [7]
+    pub adaptive_stats: AdaptiveStats,
+    /// Placement stats for Placement tab [8]
+    pub placement_stats: PlacementStats,
+    /// Health stats for Health tab [9]
+    pub health_stats: HealthStats,
+    /// MCP client state for MCP tab [0]
+    pub mcp_state: McpState,
 }
 
 impl Default for App {
@@ -129,6 +155,13 @@ impl App {
             gossip_stats: None,
             proof_status: ProofStatus::new(),
             show_proof_help: false,
+            // Initialize new state
+            dht_stats: DhtStats::default(),
+            eigentrust_stats: EigenTrustStats::default(),
+            adaptive_stats: AdaptiveStats::default(),
+            placement_stats: PlacementStats::default(),
+            health_stats: HealthStats::default(),
+            mcp_state: McpState::default(),
         }
     }
 
@@ -148,17 +181,29 @@ impl App {
             Tab::Overview => Tab::GossipHealth,
             Tab::GossipHealth => Tab::ConnectivityMatrix,
             Tab::ConnectivityMatrix => Tab::ProtocolLog,
-            Tab::ProtocolLog => Tab::Overview,
+            Tab::ProtocolLog => Tab::Dht,
+            Tab::Dht => Tab::EigenTrust,
+            Tab::EigenTrust => Tab::Adaptive,
+            Tab::Adaptive => Tab::Placement,
+            Tab::Placement => Tab::Health,
+            Tab::Health => Tab::Mcp,
+            Tab::Mcp => Tab::Overview,
         };
     }
 
     /// Cycle to the previous tab.
     pub fn prev_tab(&mut self) {
         self.active_tab = match self.active_tab {
-            Tab::Overview => Tab::ProtocolLog,
+            Tab::Overview => Tab::Mcp,
             Tab::GossipHealth => Tab::Overview,
             Tab::ConnectivityMatrix => Tab::GossipHealth,
             Tab::ProtocolLog => Tab::ConnectivityMatrix,
+            Tab::Dht => Tab::ProtocolLog,
+            Tab::EigenTrust => Tab::Dht,
+            Tab::Adaptive => Tab::EigenTrust,
+            Tab::Placement => Tab::Adaptive,
+            Tab::Health => Tab::Placement,
+            Tab::Mcp => Tab::Health,
         };
     }
 
@@ -577,6 +622,40 @@ impl App {
     pub fn scroll_connections_page_down(&mut self) {
         self.scroll_connections_by(10);
     }
+
+    // =====================================================
+    // New Stats Update Methods
+    // =====================================================
+
+    /// Update DHT statistics.
+    pub fn update_dht_stats(&mut self, stats: DhtStats) {
+        self.dht_stats = stats;
+    }
+
+    /// Update EigenTrust statistics.
+    pub fn update_eigentrust_stats(&mut self, stats: EigenTrustStats) {
+        self.eigentrust_stats = stats;
+    }
+
+    /// Update adaptive networking statistics.
+    pub fn update_adaptive_stats(&mut self, stats: AdaptiveStats) {
+        self.adaptive_stats = stats;
+    }
+
+    /// Update placement diversity statistics.
+    pub fn update_placement_stats(&mut self, stats: PlacementStats) {
+        self.placement_stats = stats;
+    }
+
+    /// Update health monitoring statistics.
+    pub fn update_health_stats(&mut self, stats: HealthStats) {
+        self.health_stats = stats;
+    }
+
+    /// Update MCP client state.
+    pub fn update_mcp_state(&mut self, state: McpState) {
+        self.mcp_state = state;
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -591,10 +670,18 @@ pub enum InputEvent {
     PageDown,
     NextTab,
     PrevTab,
+    // Existing tabs [1-4]
     TabOverview,
     TabGossipHealth,
     TabConnectivityMatrix,
     TabProtocolLog,
+    // New tabs [5-9, 0]
+    TabDht,
+    TabEigenTrust,
+    TabAdaptive,
+    TabPlacement,
+    TabHealth,
+    TabMcp,
     ToggleProofHelp,
     Unknown,
 }
@@ -615,12 +702,20 @@ impl InputEvent {
             // Tab navigation
             KeyCode::Tab => Self::NextTab,
             KeyCode::BackTab => Self::PrevTab,
+            // Existing tabs [1-4]
             KeyCode::Char('1') => Self::TabOverview,
             KeyCode::Char('2') | KeyCode::Char('g') | KeyCode::Char('G') => Self::TabGossipHealth,
             KeyCode::Char('3') | KeyCode::Char('c') | KeyCode::Char('C') => {
                 Self::TabConnectivityMatrix
             }
             KeyCode::Char('4') | KeyCode::Char('l') | KeyCode::Char('L') => Self::TabProtocolLog,
+            // New tabs [5-9, 0]
+            KeyCode::Char('5') | KeyCode::Char('d') | KeyCode::Char('D') => Self::TabDht,
+            KeyCode::Char('6') | KeyCode::Char('e') | KeyCode::Char('E') => Self::TabEigenTrust,
+            KeyCode::Char('7') => Self::TabAdaptive,
+            KeyCode::Char('8') => Self::TabPlacement,
+            KeyCode::Char('9') | KeyCode::Char('h') | KeyCode::Char('H') => Self::TabHealth,
+            KeyCode::Char('0') | KeyCode::Char('m') | KeyCode::Char('M') => Self::TabMcp,
             KeyCode::Char('p') | KeyCode::Char('P') => Self::ToggleProofHelp,
             KeyCode::Esc => Self::Quit,
             _ => Self::Unknown,
@@ -632,6 +727,7 @@ impl InputEvent {
 mod tests {
     use super::*;
     use crate::registry::ConnectionMethod;
+    use crate::tui::types::HealthStatus;
 
     #[test]
     fn test_app_creation() {
@@ -691,6 +787,132 @@ mod tests {
         assert_eq!(
             InputEvent::from_key(KeyCode::Char('x')),
             InputEvent::Unknown
+        );
+    }
+
+    #[test]
+    fn test_new_stats_updates() {
+        let mut app = App::new();
+
+        // Test DHT stats update
+        let dht_stats = DhtStats {
+            total_routing_peers: 150,
+            ..Default::default()
+        };
+        app.update_dht_stats(dht_stats);
+        assert_eq!(app.dht_stats.total_routing_peers, 150);
+
+        // Test EigenTrust stats update
+        let eigen_stats = EigenTrustStats {
+            local_trust_score: 0.95,
+            ..Default::default()
+        };
+        app.update_eigentrust_stats(eigen_stats);
+        assert!((app.eigentrust_stats.local_trust_score - 0.95).abs() < 0.001);
+
+        // Test Adaptive stats update
+        let adaptive_stats = AdaptiveStats::default();
+        app.update_adaptive_stats(adaptive_stats);
+        assert!(app.adaptive_stats.thompson_sampling.arms.is_empty());
+
+        // Test Placement stats update
+        let placement_stats = PlacementStats {
+            geographic_diversity: 0.85,
+            ..Default::default()
+        };
+        app.update_placement_stats(placement_stats);
+        assert!((app.placement_stats.geographic_diversity - 0.85).abs() < 0.001);
+
+        // Test Health stats update
+        let health_stats = HealthStats {
+            overall_score: 0.99,
+            status: HealthStatus::Healthy,
+            ..Default::default()
+        };
+        app.update_health_stats(health_stats);
+        assert!((app.health_stats.overall_score - 0.99).abs() < 0.001);
+        assert_eq!(app.health_stats.status, HealthStatus::Healthy);
+
+        // Test MCP state update
+        let mcp_state = McpState {
+            endpoint: Some("http://test:8080".to_string()),
+            ..Default::default()
+        };
+        app.update_mcp_state(mcp_state);
+        assert_eq!(
+            app.mcp_state.endpoint,
+            Some("http://test:8080".to_string())
+        );
+    }
+
+    #[test]
+    fn test_tab_navigation_new_tabs() {
+        let mut app = App::new();
+
+        // Start at Overview
+        assert_eq!(app.active_tab, Tab::Overview);
+
+        // Navigate through all tabs
+        app.next_tab(); // GossipHealth
+        app.next_tab(); // ConnectivityMatrix
+        app.next_tab(); // ProtocolLog
+        app.next_tab(); // Dht
+        assert_eq!(app.active_tab, Tab::Dht);
+
+        app.next_tab(); // EigenTrust
+        assert_eq!(app.active_tab, Tab::EigenTrust);
+
+        app.next_tab(); // Adaptive
+        assert_eq!(app.active_tab, Tab::Adaptive);
+
+        app.next_tab(); // Placement
+        assert_eq!(app.active_tab, Tab::Placement);
+
+        app.next_tab(); // Health
+        assert_eq!(app.active_tab, Tab::Health);
+
+        app.next_tab(); // Mcp
+        assert_eq!(app.active_tab, Tab::Mcp);
+
+        app.next_tab(); // Back to Overview
+        assert_eq!(app.active_tab, Tab::Overview);
+
+        // Test prev_tab for new tabs
+        app.prev_tab(); // Mcp
+        assert_eq!(app.active_tab, Tab::Mcp);
+
+        app.prev_tab(); // Health
+        assert_eq!(app.active_tab, Tab::Health);
+    }
+
+    #[test]
+    fn test_new_tab_input_events() {
+        use crossterm::event::KeyCode;
+
+        assert_eq!(InputEvent::from_key(KeyCode::Char('5')), InputEvent::TabDht);
+        assert_eq!(
+            InputEvent::from_key(KeyCode::Char('d')),
+            InputEvent::TabDht
+        );
+        assert_eq!(
+            InputEvent::from_key(KeyCode::Char('6')),
+            InputEvent::TabEigenTrust
+        );
+        assert_eq!(
+            InputEvent::from_key(KeyCode::Char('7')),
+            InputEvent::TabAdaptive
+        );
+        assert_eq!(
+            InputEvent::from_key(KeyCode::Char('8')),
+            InputEvent::TabPlacement
+        );
+        assert_eq!(
+            InputEvent::from_key(KeyCode::Char('9')),
+            InputEvent::TabHealth
+        );
+        assert_eq!(
+            InputEvent::from_key(KeyCode::Char('0')),
+            InputEvent::TabMcp
         );
     }
 }

@@ -38,6 +38,8 @@
 //! ```
 
 mod app;
+pub mod data_bridge;
+mod screens;
 mod types;
 mod ui;
 
@@ -420,6 +422,25 @@ pub async fn run_tui(
                         }
                         InputEvent::TabProtocolLog => {
                             app.active_tab = app::Tab::ProtocolLog;
+                        }
+                        // New tabs [5-9, 0]
+                        InputEvent::TabDht => {
+                            app.active_tab = app::Tab::Dht;
+                        }
+                        InputEvent::TabEigenTrust => {
+                            app.active_tab = app::Tab::EigenTrust;
+                        }
+                        InputEvent::TabAdaptive => {
+                            app.active_tab = app::Tab::Adaptive;
+                        }
+                        InputEvent::TabPlacement => {
+                            app.active_tab = app::Tab::Placement;
+                        }
+                        InputEvent::TabHealth => {
+                            app.active_tab = app::Tab::Health;
+                        }
+                        InputEvent::TabMcp => {
+                            app.active_tab = app::Tab::Mcp;
                         }
                         InputEvent::ToggleProofHelp => {
                             app.toggle_proof_help();
