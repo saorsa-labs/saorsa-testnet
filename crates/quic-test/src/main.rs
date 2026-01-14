@@ -43,6 +43,10 @@ struct Args {
     gossip_first: bool,
     /// Custom data directory for identity and cache storage (enables unique identities per node)
     data_dir: Option<PathBuf>,
+    /// DHT metrics collection enabled (populates DHT/EigenTrust/Health tabs with real data)
+    with_dht: bool,
+    /// Enable embedded Communitas runtime
+    with_communitas: bool,
 }
 
 impl Default for Args {
@@ -60,6 +64,8 @@ impl Default for Args {
             min_proof_nodes: 2,
             gossip_first: true, // Enabled by default - use epidemic gossip for peer discovery
             data_dir: None,     // Use default platform data directory
+            with_dht: true,     // DHT metrics collection enabled by default
+            with_communitas: true,
         }
     }
 }
@@ -121,6 +127,8 @@ fn parse_args() -> Args {
                     args.data_dir = Some(PathBuf::from(dir));
                 }
             }
+            "--no-dht" => args.with_dht = false,
+            "--no-communitas" => args.with_communitas = false,
             "-h" | "--help" => {
                 print_help();
                 std::process::exit(0);
@@ -159,6 +167,8 @@ OPTIONS:
     --gossip-first          Use epidemic gossip for peer discovery (default: enabled)
     --no-gossip-first       Use registry-based peer discovery instead of gossip
     --data-dir <DIR>        Custom data directory for identity storage (enables unique node IDs)
+    --no-dht                Disable DHT metrics (enabled by default)
+    --no-communitas         Disable embedded Communitas demo runtime
     -q, --quiet             Disable TUI, log mode only
     -h, --help              Print this help message
 
@@ -268,6 +278,8 @@ async fn main() -> anyhow::Result<()> {
             local_only: args.local_only,
             gossip_first: args.gossip_first,
             data_dir: args.data_dir.clone(),
+            with_dht: args.with_dht,
+            with_communitas: args.with_communitas,
             ..Default::default()
         };
 

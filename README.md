@@ -79,6 +79,20 @@ cargo run -p saorsa-quic-test -- --dashboard
 cargo run -p saorsa-quic-test --bin saorsa-testctl -- --help
 ```
 
+### Embedded Communitas Demo
+
+Every `saorsa-quic-test` node now boots a Communitas demo identity and MCP server alongside the QUIC tester. This lets you open two TUIs and exchange real Communitas messages/files without any extra setup:
+
+```bash
+# Terminal 1
+cargo run -p saorsa-quic-test -- --data-dir /tmp/node-a
+
+# Terminal 2
+cargo run -p saorsa-quic-test -- --data-dir /tmp/node-b
+```
+
+Each node derives a deterministic four-word identity from its peer ID, auto-creates a per-node Communitas vault under `<data_dir>/communitas/<four-words>`, and exposes bespoke MCP forms in the TUI. To disable the embedded Communitas stack (for very low-memory test rigs) pass `--no-communitas`.
+
 ## Test Binaries
 
 | Binary | Description | Command |

@@ -360,6 +360,22 @@ cargo zig build --release --target x86_64-unknown-linux-gnu
 ls target/x86_64-unknown-linux-gnu/release/saorsa-quic-test
 ```
 
+### Rolling Out Communitas-Enabled Builds
+
+The `saorsa-quic-test` binary now embeds a Communitas MCP server and demo identity on every node. After cutting a new build, redeploy to all VPS machines so operators can exercise the TUI messaging/forms against live infrastructure:
+
+```bash
+# 1) Build or download the release binary (see above)
+
+# 2) Run the deploy helper (scp + systemd restart)
+./scripts/deploy-test-network.sh deploy --version <semver-tag>
+
+# To validate the commands without touching the fleet
+./scripts/deploy-test-network.sh deploy --dry-run --version <tag>
+```
+
+The script copies `saorsa-quic-test` into `/opt/saorsa-test/` on each host and restarts the systemd unit. Once the rollout finishes, SSH into any two nodes and launch the TUI in gossip-first mode. Navigate to the MCP tab, select the Messaging form, and send test messages/files between the two demo users. Each node’s Communitas data lives under `/opt/saorsa-test/data/communitas/<four-words>`; do **not** delete those directories unless you intend to reset the demo identity.
+
 ### Deployment Script
 
 ```bash

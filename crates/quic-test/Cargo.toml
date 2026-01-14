@@ -104,6 +104,10 @@ clap.workspace = true
 # Local IP address discovery for local agents
 local-ip-address.workspace = true
 
+# Communitas integration for demo identities/runtime
+four-word-networking = "2.6"
+communitas-core = { path = "../../../communitas/communitas-core" }
+
 [dev-dependencies]
 tempfile = "3"
 

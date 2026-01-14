@@ -839,10 +839,7 @@ mod tests {
             ..Default::default()
         };
         app.update_mcp_state(mcp_state);
-        assert_eq!(
-            app.mcp_state.endpoint,
-            Some("http://test:8080".to_string())
-        );
+        assert_eq!(app.mcp_state.endpoint, Some("http://test:8080".to_string()));
     }
 
     #[test]
@@ -890,10 +887,7 @@ mod tests {
         use crossterm::event::KeyCode;
 
         assert_eq!(InputEvent::from_key(KeyCode::Char('5')), InputEvent::TabDht);
-        assert_eq!(
-            InputEvent::from_key(KeyCode::Char('d')),
-            InputEvent::TabDht
-        );
+        assert_eq!(InputEvent::from_key(KeyCode::Char('d')), InputEvent::TabDht);
         assert_eq!(
             InputEvent::from_key(KeyCode::Char('6')),
             InputEvent::TabEigenTrust
@@ -910,9 +904,6 @@ mod tests {
             InputEvent::from_key(KeyCode::Char('9')),
             InputEvent::TabHealth
         );
-        assert_eq!(
-            InputEvent::from_key(KeyCode::Char('0')),
-            InputEvent::TabMcp
-        );
+        assert_eq!(InputEvent::from_key(KeyCode::Char('0')), InputEvent::TabMcp);
     }
 }

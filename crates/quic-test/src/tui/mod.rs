@@ -38,17 +38,18 @@
 //! ```
 
 mod app;
-pub mod data_bridge;
 mod screens;
 mod types;
 mod ui;
 
 pub use app::{App, AppState, InputEvent, Tab};
 pub use types::{
-    CacheHealth, ConnectedPeer, ConnectionQuality, ConnectivityTestResults, FrameDirection,
-    GeographicDistribution, LocalNodeInfo, NatTraversalPhase, NatTypeAnalytics, NetworkStatistics,
-    ProofStatus, ProtocolFrame, TestConnectivityMethod, TrafficDirection, TrafficType,
-    country_flag,
+    AlertSeverity, AnomalyEntry, CacheHealth, ComponentHealth, ConnectedPeer, ConnectionQuality,
+    ConnectivityTestResults, DhtOperationStats, DhtStats, EigenTrustStats, FrameDirection,
+    GeographicDistribution, HealthAlert, HealthStats, HealthStatus, LatencyStats, LocalNodeInfo,
+    McpConnectionStatus, McpState, NatTraversalPhase, NatTypeAnalytics, NetworkStatistics,
+    PlacementStats, ProofStatus, ProtocolFrame, RegionStats, ResourceUsage, TestConnectivityMethod,
+    TrafficDirection, TrafficType, TrustEntry, country_flag,
 };
 
 use crossterm::{
@@ -135,6 +136,13 @@ fn event_name(event: &TuiEvent) -> &'static str {
         TuiEvent::GossipCrateTestComplete { .. } => "GossipCrateTestComplete",
         TuiEvent::UpdateGossipStats(_) => "UpdateGossipStats",
         TuiEvent::ProofStatusUpdate(_) => "ProofStatusUpdate",
+        // New stats events
+        TuiEvent::UpdateDhtStats(_) => "UpdateDhtStats",
+        TuiEvent::UpdateEigenTrustStats(_) => "UpdateEigenTrustStats",
+        TuiEvent::UpdateAdaptiveStats(_) => "UpdateAdaptiveStats",
+        TuiEvent::UpdatePlacementStats(_) => "UpdatePlacementStats",
+        TuiEvent::UpdateHealthStats(_) => "UpdateHealthStats",
+        TuiEvent::UpdateMcpState(_) => "UpdateMcpState",
     }
 }
 
@@ -300,6 +308,19 @@ pub enum TuiEvent {
     UpdateGossipStats(crate::registry::NodeGossipStats),
     /// Update proof verification status
     ProofStatusUpdate(types::ProofStatus),
+    // === New stats events for expanded TUI tabs ===
+    /// Update DHT statistics [Tab 5]
+    UpdateDhtStats(types::DhtStats),
+    /// Update EigenTrust statistics [Tab 6]
+    UpdateEigenTrustStats(types::EigenTrustStats),
+    /// Update Adaptive networking statistics [Tab 7]
+    UpdateAdaptiveStats(types::AdaptiveStats),
+    /// Update Placement statistics [Tab 8]
+    UpdatePlacementStats(types::PlacementStats),
+    /// Update Health monitoring statistics [Tab 9]
+    UpdateHealthStats(types::HealthStats),
+    /// Update MCP client state [Tab 0]
+    UpdateMcpState(types::McpState),
 }
 
 /// Configuration for the TUI.
@@ -796,6 +817,25 @@ fn handle_tui_event(app: &mut App, event: TuiEvent) {
         }
         TuiEvent::ProofStatusUpdate(status) => {
             app.update_proof_status(status);
+        }
+        // === New stats event handlers ===
+        TuiEvent::UpdateDhtStats(stats) => {
+            app.update_dht_stats(stats);
+        }
+        TuiEvent::UpdateEigenTrustStats(stats) => {
+            app.update_eigentrust_stats(stats);
+        }
+        TuiEvent::UpdateAdaptiveStats(stats) => {
+            app.update_adaptive_stats(stats);
+        }
+        TuiEvent::UpdatePlacementStats(stats) => {
+            app.update_placement_stats(stats);
+        }
+        TuiEvent::UpdateHealthStats(stats) => {
+            app.update_health_stats(stats);
+        }
+        TuiEvent::UpdateMcpState(state) => {
+            app.update_mcp_state(state);
         }
     }
 }

@@ -62,9 +62,11 @@
 //! ```
 
 pub mod bootstrap_peers;
+pub mod communitas;
 pub mod crdt_verification;
 pub mod dashboard;
 pub mod debug_automation;
+pub mod dht_metrics;
 pub mod epidemic_gossip;
 pub mod gossip;
 pub mod gossip_tests;
@@ -178,6 +180,8 @@ pub use lib_verification::{
     LibraryVerificationResult, TestResult as LibTestResult, TestStatus as LibTestStatus,
     VerificationConfig, print_summary as print_verification_summary, verify_all_libraries,
 };
+
+pub use dht_metrics::{MetricsCollector, StatsBridge};
 
 // Re-export ant-quic types for unified transport abstraction
 pub use ant_quic::{

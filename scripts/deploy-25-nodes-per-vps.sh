@@ -35,8 +35,8 @@ for vps in $VPS_NODES; do
     ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no "root@$ip" bash -s <<EOF
         set -e
 
-        # Kill all existing ant-quic processes
-        pkill -9 ant-quic 2>/dev/null || true
+        # Kill all existing saorsa-quic-test processes
+        pkill -9 saorsa-quic-test 2>/dev/null || true
         sleep 2
 
         # Create log directory
@@ -51,7 +51,7 @@ for vps in $VPS_NODES; do
             # Create unique data directory for this node's identity keypair
             mkdir -p /tmp/saorsa-node-\$i
 
-            nohup /usr/local/bin/ant-quic-test \\
+            nohup /usr/local/bin/saorsa-quic-test \\
                 --registry-url $REGISTRY_URL \\
                 --max-peers $MAX_PEERS \\
                 --bind-port 0 \\
@@ -66,13 +66,13 @@ for vps in $VPS_NODES; do
         # Wait for processes to stabilize
         sleep 3
 
-        # Count running processes
-        running=\$(pgrep -c ant-quic 2>/dev/null || echo 0)
+        # Count running processes (use -f for full command matching, binary name > 15 chars)
+        running=\$(pgrep -fc saorsa-quic-test 2>/dev/null | tr -d '\n' || echo 0)
         echo "Started \$running/$NODES_PER_VPS nodes on $name"
 
         if [ "\$running" -lt "$NODES_PER_VPS" ]; then
             echo "WARNING: Only \$running nodes started, expected $NODES_PER_VPS"
-            ps aux | grep ant-quic | grep -v grep | head -5
+            ps aux | grep saorsa-quic-test | grep -v grep | head -5
         fi
 EOF
 
