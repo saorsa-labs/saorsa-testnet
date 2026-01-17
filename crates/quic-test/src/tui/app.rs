@@ -7,8 +7,9 @@ use crate::gossip_tests::GossipTestResults;
 use crate::tui::types::{
     AdaptiveStats, CacheHealth, ConnectedPeer, ConnectionHistoryEntry, ConnectionStatus,
     ConnectivityTestResults, DhtStats, EigenTrustStats, FrameDirection, GeographicDistribution,
-    HealthStats, LocalNodeInfo, McpState, NatTraversalPhase, NatTypeAnalytics, NetworkStatistics,
-    PlacementStats, ProofStatus, ProtocolFrame, TestConnectivityMethod, TrafficType,
+    HealthStats, LocalNodeInfo, McpState, McpToolCategory, NatTraversalPhase, NatTypeAnalytics,
+    NetworkStatistics, PlacementStats, ProofStatus, ProtocolFrame, TestConnectivityMethod,
+    TrafficType,
 };
 use ratatui::widgets::TableState;
 use std::collections::{HashMap, HashSet};
@@ -26,26 +27,14 @@ pub enum AppState {
 /// TUI Tab for navigation between different views.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Tab {
-    /// Main overview (default - current layout) [1]
+    /// Main overview with peer connections [1]
     #[default]
     Overview,
-    /// Detailed gossip health view for all 9 saorsa-gossip crates [2]
+    /// Gossip health view for saorsa-gossip crates [2]
     GossipHealth,
-    /// N×N peer connectivity matrix [3]
-    ConnectivityMatrix,
-    /// Protocol frame log (detailed message flow) [4]
+    /// Protocol frame log (detailed message flow) [3]
     ProtocolLog,
-    /// DHT statistics and routing table [5]
-    Dht,
-    /// EigenTrust reputation scores [6]
-    EigenTrust,
-    /// Adaptive network (Thompson Sampling, Q-Learning) [7]
-    Adaptive,
-    /// Data placement and diversity [8]
-    Placement,
-    /// Overall node/network health [9]
-    Health,
-    /// MCP client for tool invocation [0]
+    /// MCP client for messaging and tool invocation [4]
     Mcp,
 }
 
@@ -179,14 +168,8 @@ impl App {
     pub fn next_tab(&mut self) {
         self.active_tab = match self.active_tab {
             Tab::Overview => Tab::GossipHealth,
-            Tab::GossipHealth => Tab::ConnectivityMatrix,
-            Tab::ConnectivityMatrix => Tab::ProtocolLog,
-            Tab::ProtocolLog => Tab::Dht,
-            Tab::Dht => Tab::EigenTrust,
-            Tab::EigenTrust => Tab::Adaptive,
-            Tab::Adaptive => Tab::Placement,
-            Tab::Placement => Tab::Health,
-            Tab::Health => Tab::Mcp,
+            Tab::GossipHealth => Tab::ProtocolLog,
+            Tab::ProtocolLog => Tab::Mcp,
             Tab::Mcp => Tab::Overview,
         };
     }
@@ -196,14 +179,8 @@ impl App {
         self.active_tab = match self.active_tab {
             Tab::Overview => Tab::Mcp,
             Tab::GossipHealth => Tab::Overview,
-            Tab::ConnectivityMatrix => Tab::GossipHealth,
-            Tab::ProtocolLog => Tab::ConnectivityMatrix,
-            Tab::Dht => Tab::ProtocolLog,
-            Tab::EigenTrust => Tab::Dht,
-            Tab::Adaptive => Tab::EigenTrust,
-            Tab::Placement => Tab::Adaptive,
-            Tab::Health => Tab::Placement,
-            Tab::Mcp => Tab::Health,
+            Tab::ProtocolLog => Tab::GossipHealth,
+            Tab::Mcp => Tab::ProtocolLog,
         };
     }
 
@@ -656,6 +633,376 @@ impl App {
     pub fn update_mcp_state(&mut self, state: McpState) {
         self.mcp_state = state;
     }
+
+    // =====================================================
+    // MCP Tab Navigation Methods
+    // =====================================================
+
+    /// Move to the next MCP category (→ key).
+    pub fn mcp_next_category(&mut self) {
+        self.mcp_state.selected_category = self.mcp_state.selected_category.next();
+        // Reset tool selection when changing categories
+        self.mcp_state.selected_tool = None;
+    }
+
+    /// Move to the previous MCP category (← key).
+    pub fn mcp_prev_category(&mut self) {
+        self.mcp_state.selected_category = self.mcp_state.selected_category.prev();
+        // Reset tool selection when changing categories
+        self.mcp_state.selected_tool = None;
+    }
+
+    /// Select MCP category by index (1-7 keys).
+    pub fn mcp_select_category(&mut self, index: usize) {
+        if index < McpToolCategory::ALL.len() {
+            self.mcp_state.selected_category = McpToolCategory::ALL[index];
+            // Reset tool selection when changing categories
+            self.mcp_state.selected_tool = None;
+        }
+    }
+
+    /// Move tool selection up (↑ key).
+    pub fn mcp_tool_up(&mut self) {
+        let tool_count = self.mcp_filtered_tool_count();
+        if tool_count == 0 {
+            return;
+        }
+        self.mcp_state.selected_tool = Some(match self.mcp_state.selected_tool {
+            Some(idx) if idx > 0 => idx - 1,
+            Some(_) => tool_count - 1, // Wrap to bottom
+            None => 0,
+        });
+    }
+
+    /// Move tool selection down (↓ key).
+    pub fn mcp_tool_down(&mut self) {
+        let tool_count = self.mcp_filtered_tool_count();
+        if tool_count == 0 {
+            return;
+        }
+        self.mcp_state.selected_tool = Some(match self.mcp_state.selected_tool {
+            Some(idx) if idx < tool_count - 1 => idx + 1,
+            Some(_) => 0, // Wrap to top
+            None => 0,
+        });
+    }
+
+    /// Get count of tools in current category.
+    fn mcp_filtered_tool_count(&self) -> usize {
+        let category = self.mcp_state.selected_category;
+        self.mcp_state
+            .tools
+            .iter()
+            .filter(|t| t.category == category)
+            .count()
+    }
+
+    /// Check if MCP is in parameter edit mode.
+    pub fn mcp_is_editing(&self) -> bool {
+        self.mcp_state.editing_param.is_some()
+    }
+
+    /// Enter parameter edit mode for the selected tool.
+    /// Returns true if edit mode was entered.
+    pub fn mcp_enter_edit(&mut self) -> bool {
+        if let Some(tool) = self.mcp_get_selected_tool() {
+            if !tool.parameters.is_empty() {
+                self.mcp_state.editing_param = Some(0);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Exit parameter edit mode.
+    pub fn mcp_exit_edit(&mut self) {
+        self.mcp_state.editing_param = None;
+    }
+
+    /// Move to next parameter in edit mode.
+    pub fn mcp_next_param(&mut self) {
+        if let Some(tool) = self.mcp_get_selected_tool() {
+            let param_count = tool.parameters.len();
+            if param_count > 0 {
+                if let Some(idx) = self.mcp_state.editing_param {
+                    self.mcp_state.editing_param = Some((idx + 1) % param_count);
+                }
+            }
+        }
+    }
+
+    /// Move to previous parameter in edit mode.
+    pub fn mcp_prev_param(&mut self) {
+        if let Some(tool) = self.mcp_get_selected_tool() {
+            let param_count = tool.parameters.len();
+            if param_count > 0 {
+                if let Some(idx) = self.mcp_state.editing_param {
+                    self.mcp_state.editing_param =
+                        Some(if idx == 0 { param_count - 1 } else { idx - 1 });
+                }
+            }
+        }
+    }
+
+    /// Type a character into the current parameter.
+    pub fn mcp_type_char(&mut self, c: char) {
+        if let Some(param_idx) = self.mcp_state.editing_param {
+            if let Some(tool) = self.mcp_get_selected_tool() {
+                if let Some(param) = tool.parameters.get(param_idx) {
+                    let param_name = param.name.clone();
+                    let entry = self
+                        .mcp_state
+                        .parameter_inputs
+                        .entry(param_name)
+                        .or_default();
+                    entry.push(c);
+                }
+            }
+        }
+    }
+
+    /// Delete last character from current parameter.
+    pub fn mcp_backspace(&mut self) {
+        if let Some(param_idx) = self.mcp_state.editing_param {
+            if let Some(tool) = self.mcp_get_selected_tool() {
+                if let Some(param) = tool.parameters.get(param_idx) {
+                    if let Some(value) = self.mcp_state.parameter_inputs.get_mut(&param.name) {
+                        value.pop();
+                    }
+                }
+            }
+        }
+    }
+
+    /// Get the currently selected tool (if any).
+    pub fn mcp_get_selected_tool(&self) -> Option<crate::tui::types::McpTool> {
+        let category = self.mcp_state.selected_category;
+        let filtered: Vec<_> = self
+            .mcp_state
+            .tools
+            .iter()
+            .filter(|t| t.category == category)
+            .collect();
+
+        self.mcp_state
+            .selected_tool
+            .and_then(|idx| filtered.get(idx).map(|t| (*t).clone()))
+    }
+
+    /// Clear parameter inputs for the current tool.
+    pub fn mcp_clear_inputs(&mut self) {
+        self.mcp_state.parameter_inputs.clear();
+    }
+
+    /// Invoke the currently selected tool with current parameter values.
+    /// Returns true if invocation was queued.
+    pub fn mcp_invoke_tool(&mut self) -> bool {
+        use crate::tui::types::{McpInvocation, McpInvocationResult};
+        use std::time::{Duration, Instant};
+
+        if let Some(tool) = self.mcp_get_selected_tool() {
+            let tool_name = tool.name.clone();
+            let parameters = self.mcp_state.parameter_inputs.clone();
+
+            // Add to history as pending
+            let invocation = McpInvocation {
+                tool_name: tool_name.clone(),
+                parameters,
+                result: McpInvocationResult::Pending,
+                timestamp: Instant::now(),
+                duration: Duration::ZERO,
+            };
+
+            self.mcp_state.history.push(invocation);
+
+            // Exit edit mode and clear inputs
+            self.mcp_exit_edit();
+            self.mcp_clear_inputs();
+
+            // TODO: Actual invocation via McpClient channel
+            // For now, mark as success with stub message
+            if let Some(last) = self.mcp_state.history.last_mut() {
+                last.result = McpInvocationResult::Success(format!(
+                    "Tool '{}' invocation queued (stub)",
+                    tool_name
+                ));
+                last.duration = Duration::from_millis(1);
+            }
+
+            true
+        } else {
+            false
+        }
+    }
+
+    // ==========================================================================
+    // Contact Management Methods
+    // ==========================================================================
+
+    /// Check if currently in contact add mode.
+    pub fn contact_is_adding(&self) -> bool {
+        self.mcp_state.adding_contact.is_some()
+    }
+
+    /// Start adding a new contact.
+    pub fn contact_start_add(&mut self) {
+        self.mcp_state.adding_contact = Some(String::new());
+    }
+
+    /// Cancel adding a contact.
+    pub fn contact_cancel_add(&mut self) {
+        self.mcp_state.adding_contact = None;
+    }
+
+    /// Type a character in add contact mode.
+    pub fn contact_type_char(&mut self, c: char) {
+        if let Some(ref mut input) = self.mcp_state.adding_contact {
+            // Only allow valid four-word ID characters (letters, hyphens, dots)
+            if c.is_ascii_alphanumeric() || c == '-' || c == '.' {
+                input.push(c);
+            }
+        }
+    }
+
+    /// Backspace in add contact mode.
+    pub fn contact_backspace(&mut self) {
+        if let Some(ref mut input) = self.mcp_state.adding_contact {
+            input.pop();
+        }
+    }
+
+    /// Submit the new contact. Returns the four-word ID if valid.
+    pub fn contact_submit_add(&mut self) -> Option<String> {
+        if let Some(ref input) = self.mcp_state.adding_contact {
+            let trimmed = input.trim().to_string();
+            if !trimmed.is_empty() {
+                // Basic validation: should have dots or hyphens between words
+                // Full validation will happen when actually creating the contact
+                self.mcp_state.adding_contact = None;
+                return Some(trimmed);
+            }
+        }
+        self.mcp_state.adding_contact = None;
+        None
+    }
+
+    /// Move contact selection up.
+    pub fn contact_up(&mut self) {
+        if self.mcp_state.contacts.is_empty() {
+            return;
+        }
+
+        let new_idx = match self.mcp_state.selected_contact {
+            None => self.mcp_state.contacts.len().saturating_sub(1),
+            Some(0) => self.mcp_state.contacts.len().saturating_sub(1),
+            Some(idx) => idx - 1,
+        };
+        self.mcp_state.selected_contact = Some(new_idx);
+    }
+
+    /// Move contact selection down.
+    pub fn contact_down(&mut self) {
+        if self.mcp_state.contacts.is_empty() {
+            return;
+        }
+
+        let max_idx = self.mcp_state.contacts.len().saturating_sub(1);
+        let new_idx = match self.mcp_state.selected_contact {
+            None => 0,
+            Some(idx) if idx >= max_idx => 0,
+            Some(idx) => idx + 1,
+        };
+        self.mcp_state.selected_contact = Some(new_idx);
+    }
+
+    /// Get the currently selected contact.
+    pub fn get_selected_contact(&self) -> Option<&crate::tui::types::ContactDisplay> {
+        self.mcp_state
+            .selected_contact
+            .and_then(|idx| self.mcp_state.contacts.get(idx))
+    }
+
+    // ==========================================================================
+    // Message Composition Methods
+    // ==========================================================================
+
+    /// Check if currently composing a message.
+    pub fn message_is_composing(&self) -> bool {
+        self.mcp_state.composing_message.is_some()
+    }
+
+    /// Start composing a new message (requires a selected contact).
+    pub fn message_start_compose(&mut self) -> bool {
+        if self.mcp_state.selected_contact.is_some() {
+            self.mcp_state.composing_message = Some(String::new());
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Cancel composing a message.
+    pub fn message_cancel_compose(&mut self) {
+        self.mcp_state.composing_message = None;
+    }
+
+    /// Type a character in compose mode.
+    pub fn message_type_char(&mut self, c: char) {
+        if let Some(ref mut msg) = self.mcp_state.composing_message {
+            msg.push(c);
+        }
+    }
+
+    /// Backspace in compose mode.
+    pub fn message_backspace(&mut self) {
+        if let Some(ref mut msg) = self.mcp_state.composing_message {
+            msg.pop();
+        }
+    }
+
+    /// Submit the composed message. Returns (recipient_four_words, message_text) if valid.
+    pub fn message_submit(&mut self) -> Option<(String, String)> {
+        if let Some(msg) = self.mcp_state.composing_message.take() {
+            let trimmed = msg.trim().to_string();
+            if !trimmed.is_empty() {
+                // Get recipient from selected contact
+                if let Some(contact) = self.get_selected_contact() {
+                    // Prefer four-word ID, fall back to contact ID
+                    let recipient = contact
+                        .four_words
+                        .clone()
+                        .unwrap_or_else(|| contact.id.clone());
+                    return Some((recipient, trimmed));
+                }
+            }
+        }
+        None
+    }
+
+    /// Get current message being composed (for display).
+    pub fn message_get_composing(&self) -> Option<&str> {
+        self.mcp_state.composing_message.as_deref()
+    }
+
+    /// Clear current messages (when switching contacts).
+    pub fn message_clear_current(&mut self) {
+        self.mcp_state.current_messages.clear();
+    }
+
+    /// Set current messages (after loading from backend).
+    pub fn message_set_current(&mut self, messages: Vec<crate::tui::types::MessageDisplay>) {
+        self.mcp_state.current_messages = messages;
+    }
+
+    /// Scroll messages up (for future pagination).
+    pub fn message_scroll_up(&mut self) {
+        // TODO: implement message scrolling
+    }
+
+    /// Scroll messages down (for future pagination).
+    pub fn message_scroll_down(&mut self) {
+        // TODO: implement message scrolling
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -670,17 +1017,10 @@ pub enum InputEvent {
     PageDown,
     NextTab,
     PrevTab,
-    // Existing tabs [1-4]
+    // Tabs [1-4]
     TabOverview,
     TabGossipHealth,
-    TabConnectivityMatrix,
     TabProtocolLog,
-    // New tabs [5-9, 0]
-    TabDht,
-    TabEigenTrust,
-    TabAdaptive,
-    TabPlacement,
-    TabHealth,
     TabMcp,
     ToggleProofHelp,
     Unknown,
@@ -702,20 +1042,11 @@ impl InputEvent {
             // Tab navigation
             KeyCode::Tab => Self::NextTab,
             KeyCode::BackTab => Self::PrevTab,
-            // Existing tabs [1-4]
+            // Tabs [1-4]
             KeyCode::Char('1') => Self::TabOverview,
             KeyCode::Char('2') | KeyCode::Char('g') | KeyCode::Char('G') => Self::TabGossipHealth,
-            KeyCode::Char('3') | KeyCode::Char('c') | KeyCode::Char('C') => {
-                Self::TabConnectivityMatrix
-            }
-            KeyCode::Char('4') | KeyCode::Char('l') | KeyCode::Char('L') => Self::TabProtocolLog,
-            // New tabs [5-9, 0]
-            KeyCode::Char('5') | KeyCode::Char('d') | KeyCode::Char('D') => Self::TabDht,
-            KeyCode::Char('6') | KeyCode::Char('e') | KeyCode::Char('E') => Self::TabEigenTrust,
-            KeyCode::Char('7') => Self::TabAdaptive,
-            KeyCode::Char('8') => Self::TabPlacement,
-            KeyCode::Char('9') | KeyCode::Char('h') | KeyCode::Char('H') => Self::TabHealth,
-            KeyCode::Char('0') | KeyCode::Char('m') | KeyCode::Char('M') => Self::TabMcp,
+            KeyCode::Char('3') | KeyCode::Char('l') | KeyCode::Char('L') => Self::TabProtocolLog,
+            KeyCode::Char('4') | KeyCode::Char('m') | KeyCode::Char('M') => Self::TabMcp,
             KeyCode::Char('p') | KeyCode::Char('P') => Self::ToggleProofHelp,
             KeyCode::Esc => Self::Quit,
             _ => Self::Unknown,
@@ -843,7 +1174,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tab_navigation_new_tabs() {
+    fn test_tab_navigation() {
         let mut app = App::new();
 
         // Start at Overview
@@ -851,22 +1182,10 @@ mod tests {
 
         // Navigate through all tabs
         app.next_tab(); // GossipHealth
-        app.next_tab(); // ConnectivityMatrix
+        assert_eq!(app.active_tab, Tab::GossipHealth);
+
         app.next_tab(); // ProtocolLog
-        app.next_tab(); // Dht
-        assert_eq!(app.active_tab, Tab::Dht);
-
-        app.next_tab(); // EigenTrust
-        assert_eq!(app.active_tab, Tab::EigenTrust);
-
-        app.next_tab(); // Adaptive
-        assert_eq!(app.active_tab, Tab::Adaptive);
-
-        app.next_tab(); // Placement
-        assert_eq!(app.active_tab, Tab::Placement);
-
-        app.next_tab(); // Health
-        assert_eq!(app.active_tab, Tab::Health);
+        assert_eq!(app.active_tab, Tab::ProtocolLog);
 
         app.next_tab(); // Mcp
         assert_eq!(app.active_tab, Tab::Mcp);
@@ -874,36 +1193,31 @@ mod tests {
         app.next_tab(); // Back to Overview
         assert_eq!(app.active_tab, Tab::Overview);
 
-        // Test prev_tab for new tabs
+        // Test prev_tab
         app.prev_tab(); // Mcp
         assert_eq!(app.active_tab, Tab::Mcp);
 
-        app.prev_tab(); // Health
-        assert_eq!(app.active_tab, Tab::Health);
+        app.prev_tab(); // ProtocolLog
+        assert_eq!(app.active_tab, Tab::ProtocolLog);
     }
 
     #[test]
-    fn test_new_tab_input_events() {
+    fn test_tab_input_events() {
         use crossterm::event::KeyCode;
 
-        assert_eq!(InputEvent::from_key(KeyCode::Char('5')), InputEvent::TabDht);
-        assert_eq!(InputEvent::from_key(KeyCode::Char('d')), InputEvent::TabDht);
         assert_eq!(
-            InputEvent::from_key(KeyCode::Char('6')),
-            InputEvent::TabEigenTrust
+            InputEvent::from_key(KeyCode::Char('1')),
+            InputEvent::TabOverview
         );
         assert_eq!(
-            InputEvent::from_key(KeyCode::Char('7')),
-            InputEvent::TabAdaptive
+            InputEvent::from_key(KeyCode::Char('2')),
+            InputEvent::TabGossipHealth
         );
         assert_eq!(
-            InputEvent::from_key(KeyCode::Char('8')),
-            InputEvent::TabPlacement
+            InputEvent::from_key(KeyCode::Char('3')),
+            InputEvent::TabProtocolLog
         );
-        assert_eq!(
-            InputEvent::from_key(KeyCode::Char('9')),
-            InputEvent::TabHealth
-        );
-        assert_eq!(InputEvent::from_key(KeyCode::Char('0')), InputEvent::TabMcp);
+        assert_eq!(InputEvent::from_key(KeyCode::Char('4')), InputEvent::TabMcp);
+        assert_eq!(InputEvent::from_key(KeyCode::Char('m')), InputEvent::TabMcp);
     }
 }

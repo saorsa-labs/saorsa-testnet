@@ -22,10 +22,7 @@
 
 use crate::registry::{ConnectionMethod, NatType};
 use crate::tui::app::{App, Tab};
-use crate::tui::screens::{
-    draw_adaptive_tab, draw_dht_tab, draw_eigentrust_tab, draw_health_tab, draw_mcp_tab,
-    draw_placement_tab,
-};
+use crate::tui::screens::draw_mcp_tab;
 use crate::tui::types::{ConnectivityTestPhase, country_flag};
 use ratatui::{
     Frame,
@@ -163,14 +160,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     match app.active_tab {
         Tab::Overview => draw_overview_tab(frame, app, main_chunks[1]),
         Tab::GossipHealth => draw_gossip_health_tab(frame, app, main_chunks[1]),
-        Tab::ConnectivityMatrix => draw_connectivity_matrix_tab(frame, app, main_chunks[1]),
         Tab::ProtocolLog => draw_protocol_log_tab(frame, app, main_chunks[1]),
-        // New tabs with full implementations
-        Tab::Dht => draw_dht_tab(frame, app, main_chunks[1]),
-        Tab::EigenTrust => draw_eigentrust_tab(frame, app, main_chunks[1]),
-        Tab::Adaptive => draw_adaptive_tab(frame, app, main_chunks[1]),
-        Tab::Placement => draw_placement_tab(frame, app, main_chunks[1]),
-        Tab::Health => draw_health_tab(frame, app, main_chunks[1]),
         Tab::Mcp => draw_mcp_tab(frame, app, main_chunks[1]),
     }
 
@@ -192,14 +182,8 @@ fn draw_tab_bar(frame: &mut Frame, app: &App, area: Rect) {
     let selected_idx = match app.active_tab {
         Tab::Overview => 0,
         Tab::GossipHealth => 1,
-        Tab::ConnectivityMatrix => 2,
-        Tab::ProtocolLog => 3,
-        Tab::Dht => 4,
-        Tab::EigenTrust => 5,
-        Tab::Adaptive => 6,
-        Tab::Placement => 7,
-        Tab::Health => 8,
-        Tab::Mcp => 9,
+        Tab::ProtocolLog => 2,
+        Tab::Mcp => 3,
     };
 
     let tabs = Tabs::new(tab_titles)
@@ -233,7 +217,7 @@ fn draw_overview_tab(frame: &mut Frame, app: &mut App, area: Rect) {
         .constraints([
             Constraint::Length(5), // Proof Status (verification summary)
             Constraint::Length(5), // Network Stats (comprehensive counts)
-            Constraint::Length(4), // Your Node
+            Constraint::Length(5), // Your Node (with connection words)
             Constraint::Min(6),    // Connected Peers
             Constraint::Length(8), // Activity Log
         ])
@@ -1785,6 +1769,7 @@ fn draw_extended_gossip_panel(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 /// Draw the Connectivity Matrix tab - N×N peer connectivity results.
+#[allow(dead_code)]
 fn draw_connectivity_matrix_tab(frame: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)

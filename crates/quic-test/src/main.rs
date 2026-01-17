@@ -10,7 +10,7 @@ use saorsa_quic_test::{
     node::TestNodeConfig,
     proof_orchestrator::{ProofOrchestrator, ProofOrchestratorConfig},
     registry::{RegistryConfig, start_registry_server},
-    tui::{App, TuiEvent, run_tui},
+    tui::{App, McpRequest, TuiEvent, run_tui},
 };
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -43,10 +43,6 @@ struct Args {
     gossip_first: bool,
     /// Custom data directory for identity and cache storage (enables unique identities per node)
     data_dir: Option<PathBuf>,
-    /// DHT metrics collection enabled (populates DHT/EigenTrust/Health tabs with real data)
-    with_dht: bool,
-    /// Enable embedded Communitas runtime
-    with_communitas: bool,
 }
 
 impl Default for Args {
@@ -64,8 +60,6 @@ impl Default for Args {
             min_proof_nodes: 2,
             gossip_first: true, // Enabled by default - use epidemic gossip for peer discovery
             data_dir: None,     // Use default platform data directory
-            with_dht: true,     // DHT metrics collection enabled by default
-            with_communitas: true,
         }
     }
 }
@@ -127,8 +121,6 @@ fn parse_args() -> Args {
                     args.data_dir = Some(PathBuf::from(dir));
                 }
             }
-            "--no-dht" => args.with_dht = false,
-            "--no-communitas" => args.with_communitas = false,
             "-h" | "--help" => {
                 print_help();
                 std::process::exit(0);
@@ -167,8 +159,6 @@ OPTIONS:
     --gossip-first          Use epidemic gossip for peer discovery (default: enabled)
     --no-gossip-first       Use registry-based peer discovery instead of gossip
     --data-dir <DIR>        Custom data directory for identity storage (enables unique node IDs)
-    --no-dht                Disable DHT metrics (enabled by default)
-    --no-communitas         Disable embedded Communitas demo runtime
     -q, --quiet             Disable TUI, log mode only
     -h, --help              Print this help message
 
@@ -268,6 +258,12 @@ async fn main() -> anyhow::Result<()> {
         // Create TUI application
         let app = App::new();
 
+        // TODO: Re-enable MCP client when communitas-core crate linking is fixed
+        // Create MCP request channel for TUI -> future MCP integration
+        let (mcp_request_tx, _mcp_request_rx) = mpsc::channel::<McpRequest>(100);
+        // MCP client disabled - communitas-core dependency not linking correctly
+        // let mcp_client: Option<std::sync::Arc<McpClient>> = None;
+
         // Use dual-stack (IPv6 + IPv4) by binding to [::] instead of 0.0.0.0
         // On most systems, [::]:port accepts both IPv4 and IPv6 connections
         let bind_addr: SocketAddr = format!("[::]:{}", args.bind_port).parse()?;
@@ -278,8 +274,6 @@ async fn main() -> anyhow::Result<()> {
             local_only: args.local_only,
             gossip_first: args.gossip_first,
             data_dir: args.data_dir.clone(),
-            with_dht: args.with_dht,
-            with_communitas: args.with_communitas,
             ..Default::default()
         };
 
@@ -321,8 +315,9 @@ async fn main() -> anyhow::Result<()> {
                 }
             });
 
-            // Run TUI in foreground
-            run_tui(app, event_rx, tui_event_tx).await?;
+            // Run TUI in foreground (MCP disabled - pass request channel for future use)
+            let mcp_tx = Some(mcp_request_tx);
+            run_tui(app, event_rx, tui_event_tx, mcp_tx).await?;
 
             // When TUI exits, abort the node
             node_handle.abort();
@@ -391,6 +386,25 @@ fn convert_gossip_stats(
             discoveries: node_stats.rendezvous_discoveries,
             active_providers: node_stats.rendezvous_points,
         },
+    }
+}
+
+// TODO: Re-enable MCP request handling when communitas-core crate linking is fixed
+// The handle_mcp_requests function has been removed until MCP integration is ready.
+// See the mcp/ module for the client implementation.
+
+#[allow(dead_code)]
+fn _format_last_seen(timestamp: i64) -> String {
+    let now = chrono::Utc::now().timestamp();
+    let diff = now - timestamp;
+    if diff < 60 {
+        "just now".to_string()
+    } else if diff < 3600 {
+        format!("{}m ago", diff / 60)
+    } else if diff < 86400 {
+        format!("{}h ago", diff / 3600)
+    } else {
+        format!("{}d ago", diff / 86400)
     }
 }
 

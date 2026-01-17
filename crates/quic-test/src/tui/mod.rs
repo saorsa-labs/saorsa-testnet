@@ -45,9 +45,10 @@ mod ui;
 pub use app::{App, AppState, InputEvent, Tab};
 pub use types::{
     AlertSeverity, AnomalyEntry, CacheHealth, ComponentHealth, ConnectedPeer, ConnectionQuality,
-    ConnectivityTestResults, DhtOperationStats, DhtStats, EigenTrustStats, FrameDirection,
-    GeographicDistribution, HealthAlert, HealthStats, HealthStatus, LatencyStats, LocalNodeInfo,
-    McpConnectionStatus, McpState, NatTraversalPhase, NatTypeAnalytics, NetworkStatistics,
+    ConnectivityTestResults, ContactDisplay, ContactOnlineStatus, DhtOperationStats, DhtStats,
+    EigenTrustStats, FrameDirection, GeographicDistribution, HealthAlert, HealthStats,
+    HealthStatus, LatencyStats, LocalNodeInfo, McpConnectionStatus, McpState, McpTool,
+    McpToolCategory, MessageDisplay, NatTraversalPhase, NatTypeAnalytics, NetworkStatistics,
     PlacementStats, ProofStatus, ProtocolFrame, RegionStats, ResourceUsage, TestConnectivityMethod,
     TrafficDirection, TrafficType, TrustEntry, country_flag,
 };
@@ -143,6 +144,13 @@ fn event_name(event: &TuiEvent) -> &'static str {
         TuiEvent::UpdatePlacementStats(_) => "UpdatePlacementStats",
         TuiEvent::UpdateHealthStats(_) => "UpdateHealthStats",
         TuiEvent::UpdateMcpState(_) => "UpdateMcpState",
+        TuiEvent::ContactCreated(_) => "ContactCreated",
+        TuiEvent::ContactCreateFailed { .. } => "ContactCreateFailed",
+        TuiEvent::ContactsUpdated(_) => "ContactsUpdated",
+        TuiEvent::MessageSent { .. } => "MessageSent",
+        TuiEvent::MessageSendFailed { .. } => "MessageSendFailed",
+        TuiEvent::MessagesLoaded(_) => "MessagesLoaded",
+        TuiEvent::MessageReceived(_) => "MessageReceived",
     }
 }
 
@@ -321,6 +329,90 @@ pub enum TuiEvent {
     UpdateHealthStats(types::HealthStats),
     /// Update MCP client state [Tab 0]
     UpdateMcpState(types::McpState),
+    /// Contact created successfully
+    ContactCreated(types::ContactDisplay),
+    /// Contact creation failed
+    ContactCreateFailed {
+        /// The four-word ID that failed
+        four_words: String,
+        /// Error message
+        error: String,
+    },
+    /// Contacts list updated
+    ContactsUpdated(Vec<types::ContactDisplay>),
+    /// Message sent successfully
+    MessageSent {
+        /// Message ID
+        message_id: String,
+        /// Recipient
+        recipient: String,
+    },
+    /// Message send failed
+    MessageSendFailed {
+        /// Recipient
+        recipient: String,
+        /// Error message
+        error: String,
+    },
+    /// Messages loaded for a conversation
+    MessagesLoaded(Vec<types::MessageDisplay>),
+    /// Incoming message received
+    MessageReceived(types::MessageDisplay),
+}
+
+/// MCP request from TUI to McpClient
+#[derive(Debug, Clone)]
+pub enum McpRequest {
+    /// Connect to a peer using 4-word encoded address
+    ConnectByWords {
+        /// Four words encoding the peer's IP:port
+        words: String,
+    },
+    /// Create a contact from four-word ID
+    CreateContact {
+        /// Four-word identity to add
+        four_words: String,
+        /// Optional display name
+        display_name: Option<String>,
+    },
+    /// List all contacts
+    ListContacts,
+    /// Delete a contact
+    DeleteContact {
+        /// Contact ID to delete
+        contact_id: String,
+    },
+    /// Toggle favourite status
+    ToggleFavourite {
+        /// Four-word ID of contact
+        four_words: String,
+    },
+    /// Send a direct message
+    SendMessage {
+        /// Recipient four-word ID or peer ID
+        recipient: String,
+        /// Message text
+        text: String,
+    },
+    /// Load messages for a conversation with a contact
+    LoadMessages {
+        /// Contact's peer ID or four-word ID
+        contact_id: String,
+    },
+    /// Announce our presence to the network
+    AnnouncePresence,
+    /// Query for a peer's presence by pubkey
+    QueryPresence {
+        /// Public key (hex or base64)
+        pubkey: String,
+    },
+    /// Get our own presence record
+    GetOurPresence,
+    /// Get cached presence for a peer
+    GetCachedPresence {
+        /// Public key (hex or base64)
+        pubkey: String,
+    },
 }
 
 /// Configuration for the TUI.
@@ -347,10 +439,17 @@ impl Default for TuiConfig {
 /// Run the terminal UI with the given application state.
 ///
 /// Returns when the user quits (Q key or Esc).
+///
+/// # Arguments
+/// * `app` - The application state
+/// * `event_rx` - Receiver for TUI events from background tasks
+/// * `_event_tx` - Sender for TUI events (unused, kept for API compatibility)
+/// * `mcp_request_tx` - Optional sender for MCP requests (contact management, tool invocation)
 pub async fn run_tui(
     mut app: App,
     mut event_rx: mpsc::Receiver<TuiEvent>,
     _event_tx: mpsc::Sender<TuiEvent>,
+    mcp_request_tx: Option<mpsc::Sender<McpRequest>>,
 ) -> anyhow::Result<()> {
     use std::io::Write;
 
@@ -396,77 +495,279 @@ pub async fn run_tui(
             if let Event::Key(key) = event::read()? {
                 // Only handle key press events (not release)
                 if key.kind == KeyEventKind::Press {
-                    match InputEvent::from_key(key.code) {
-                        InputEvent::Quit => {
-                            // If help overlay is open, close it instead of quitting
-                            if app.show_proof_help {
-                                app.show_proof_help = false;
-                            } else {
-                                app.quit();
+                    use crossterm::event::KeyCode;
+
+                    // MCP tab has special key handling for category/tool navigation and parameter editing
+                    let handled_by_mcp = if app.active_tab == app::Tab::Mcp {
+                        // Contact add mode has highest priority
+                        if app.contact_is_adding() {
+                            match key.code {
+                                KeyCode::Esc => {
+                                    app.contact_cancel_add();
+                                    true
+                                }
+                                KeyCode::Backspace => {
+                                    app.contact_backspace();
+                                    true
+                                }
+                                KeyCode::Enter => {
+                                    // Submit the contact - returns four-word ID if valid
+                                    // Connection words encode IP:port, not identity - we need to
+                                    // connect first to receive the peer's identity packet
+                                    if let Some(four_words) = app.contact_submit_add() {
+                                        // Send MCP request if channel is available
+                                        if let Some(ref tx) = mcp_request_tx {
+                                            let _ = tx.try_send(McpRequest::ConnectByWords {
+                                                words: four_words.clone(),
+                                            });
+                                            // Show pending state
+                                            app.info_message =
+                                                Some(format!("Connecting to {}...", four_words));
+                                        } else {
+                                            // No MCP client - show error
+                                            app.error_message =
+                                                Some("MCP client not available".to_string());
+                                        }
+                                    }
+                                    true
+                                }
+                                KeyCode::Char(c) => {
+                                    app.contact_type_char(c);
+                                    true
+                                }
+                                _ => false,
                             }
                         }
-                        InputEvent::ToggleAutoConnect => {
-                            app.auto_connecting = !app.auto_connecting;
+                        // Message compose mode has second priority
+                        else if app.message_is_composing() {
+                            match key.code {
+                                KeyCode::Esc => {
+                                    app.message_cancel_compose();
+                                    true
+                                }
+                                KeyCode::Backspace => {
+                                    app.message_backspace();
+                                    true
+                                }
+                                KeyCode::Enter => {
+                                    // Submit the message
+                                    if let Some((recipient, text)) = app.message_submit() {
+                                        // Send MCP request if channel is available
+                                        if let Some(ref tx) = mcp_request_tx {
+                                            let _ = tx.try_send(McpRequest::SendMessage {
+                                                recipient: recipient.clone(),
+                                                text: text.clone(),
+                                            });
+                                            app.info_message =
+                                                Some(format!("Sending to {}...", recipient));
+                                        } else {
+                                            // Stub: show message in UI directly
+                                            use crate::tui::types::MessageDisplay;
+                                            app.mcp_state.current_messages.push(MessageDisplay {
+                                                id: uuid::Uuid::new_v4().to_string(),
+                                                text,
+                                                author: "me".to_string(),
+                                                is_outgoing: true,
+                                                timestamp: chrono::Utc::now()
+                                                    .format("%H:%M")
+                                                    .to_string(),
+                                                edited: false,
+                                            });
+                                        }
+                                    }
+                                    true
+                                }
+                                KeyCode::Char(c) => {
+                                    app.message_type_char(c);
+                                    true
+                                }
+                                _ => false,
+                            }
                         }
-                        InputEvent::Refresh => {
-                            terminal.clear()?;
+                        // When in tool parameter edit mode, capture all character input
+                        else if app.mcp_is_editing() {
+                            match key.code {
+                                KeyCode::Esc => {
+                                    app.mcp_exit_edit();
+                                    true
+                                }
+                                KeyCode::Tab => {
+                                    app.mcp_next_param();
+                                    true
+                                }
+                                KeyCode::BackTab => {
+                                    app.mcp_prev_param();
+                                    true
+                                }
+                                KeyCode::Backspace => {
+                                    app.mcp_backspace();
+                                    true
+                                }
+                                KeyCode::Enter => {
+                                    // Invoke the tool with current parameters
+                                    app.mcp_invoke_tool();
+                                    true
+                                }
+                                KeyCode::Char(c) => {
+                                    app.mcp_type_char(c);
+                                    true
+                                }
+                                KeyCode::Up => {
+                                    app.mcp_prev_param();
+                                    true
+                                }
+                                KeyCode::Down => {
+                                    app.mcp_next_param();
+                                    true
+                                }
+                                _ => false,
+                            }
+                        } else {
+                            // Not in edit mode - normal MCP navigation
+                            match key.code {
+                                // Arrow keys for MCP navigation
+                                KeyCode::Left => {
+                                    app.mcp_prev_category();
+                                    true
+                                }
+                                KeyCode::Right => {
+                                    app.mcp_next_category();
+                                    true
+                                }
+                                KeyCode::Up => {
+                                    app.mcp_tool_up();
+                                    true
+                                }
+                                KeyCode::Down => {
+                                    app.mcp_tool_down();
+                                    true
+                                }
+                                KeyCode::Enter => {
+                                    // Enter edit mode if tool has parameters
+                                    if app.mcp_get_selected_tool().is_some() {
+                                        app.mcp_enter_edit();
+                                    }
+                                    true
+                                }
+                                // 'a' key to add a contact (when in Messages category)
+                                KeyCode::Char('a') => {
+                                    if app.mcp_state.selected_category
+                                        == crate::tui::types::McpToolCategory::Messages
+                                    {
+                                        app.contact_start_add();
+                                        true
+                                    } else {
+                                        false // Let 'a' fall through to global handler
+                                    }
+                                }
+                                // 'm' key to compose a message to selected contact
+                                KeyCode::Char('m') => {
+                                    if app.mcp_state.selected_category
+                                        == crate::tui::types::McpToolCategory::Messages
+                                    {
+                                        if app.message_start_compose() {
+                                            true
+                                        } else {
+                                            // No contact selected - show hint
+                                            app.info_message =
+                                                Some("Select a contact first (↑/↓)".to_string());
+                                            true
+                                        }
+                                    } else {
+                                        false // Let 'm' fall through to global handler
+                                    }
+                                }
+                                // Number keys 1-7 for category selection on MCP tab
+                                KeyCode::Char('1') => {
+                                    app.mcp_select_category(0);
+                                    true
+                                }
+                                KeyCode::Char('2') => {
+                                    app.mcp_select_category(1);
+                                    true
+                                }
+                                KeyCode::Char('3') => {
+                                    app.mcp_select_category(2);
+                                    true
+                                }
+                                KeyCode::Char('4') => {
+                                    app.mcp_select_category(3);
+                                    true
+                                }
+                                KeyCode::Char('5') => {
+                                    app.mcp_select_category(4);
+                                    true
+                                }
+                                KeyCode::Char('6') => {
+                                    app.mcp_select_category(5);
+                                    true
+                                }
+                                KeyCode::Char('7') => {
+                                    app.mcp_select_category(6);
+                                    true
+                                }
+                                _ => false, // Let other keys fall through
+                            }
                         }
-                        InputEvent::ResetConnectivityTest => {
-                            app.connectivity_test.reset();
+                    } else {
+                        false
+                    };
+
+                    // Only process global input events if not handled by MCP tab
+                    if !handled_by_mcp {
+                        match InputEvent::from_key(key.code) {
+                            InputEvent::Quit => {
+                                // If help overlay is open, close it instead of quitting
+                                if app.show_proof_help {
+                                    app.show_proof_help = false;
+                                } else {
+                                    app.quit();
+                                }
+                            }
+                            InputEvent::ToggleAutoConnect => {
+                                app.auto_connecting = !app.auto_connecting;
+                            }
+                            InputEvent::Refresh => {
+                                terminal.clear()?;
+                            }
+                            InputEvent::ResetConnectivityTest => {
+                                app.connectivity_test.reset();
+                            }
+                            InputEvent::ScrollUp => {
+                                app.scroll_connections_up();
+                            }
+                            InputEvent::ScrollDown => {
+                                app.scroll_connections_down();
+                            }
+                            InputEvent::PageUp => {
+                                app.scroll_connections_page_up();
+                            }
+                            InputEvent::PageDown => {
+                                app.scroll_connections_page_down();
+                            }
+                            InputEvent::NextTab => {
+                                app.next_tab();
+                            }
+                            InputEvent::PrevTab => {
+                                app.prev_tab();
+                            }
+                            InputEvent::TabOverview => {
+                                app.active_tab = app::Tab::Overview;
+                            }
+                            InputEvent::TabGossipHealth => {
+                                app.active_tab = app::Tab::GossipHealth;
+                            }
+                            InputEvent::TabProtocolLog => {
+                                app.active_tab = app::Tab::ProtocolLog;
+                            }
+                            InputEvent::TabMcp => {
+                                app.active_tab = app::Tab::Mcp;
+                            }
+                            InputEvent::ToggleProofHelp => {
+                                app.toggle_proof_help();
+                            }
+                            InputEvent::Unknown => {}
                         }
-                        InputEvent::ScrollUp => {
-                            app.scroll_connections_up();
-                        }
-                        InputEvent::ScrollDown => {
-                            app.scroll_connections_down();
-                        }
-                        InputEvent::PageUp => {
-                            app.scroll_connections_page_up();
-                        }
-                        InputEvent::PageDown => {
-                            app.scroll_connections_page_down();
-                        }
-                        InputEvent::NextTab => {
-                            app.next_tab();
-                        }
-                        InputEvent::PrevTab => {
-                            app.prev_tab();
-                        }
-                        InputEvent::TabOverview => {
-                            app.active_tab = app::Tab::Overview;
-                        }
-                        InputEvent::TabGossipHealth => {
-                            app.active_tab = app::Tab::GossipHealth;
-                        }
-                        InputEvent::TabConnectivityMatrix => {
-                            app.active_tab = app::Tab::ConnectivityMatrix;
-                        }
-                        InputEvent::TabProtocolLog => {
-                            app.active_tab = app::Tab::ProtocolLog;
-                        }
-                        // New tabs [5-9, 0]
-                        InputEvent::TabDht => {
-                            app.active_tab = app::Tab::Dht;
-                        }
-                        InputEvent::TabEigenTrust => {
-                            app.active_tab = app::Tab::EigenTrust;
-                        }
-                        InputEvent::TabAdaptive => {
-                            app.active_tab = app::Tab::Adaptive;
-                        }
-                        InputEvent::TabPlacement => {
-                            app.active_tab = app::Tab::Placement;
-                        }
-                        InputEvent::TabHealth => {
-                            app.active_tab = app::Tab::Health;
-                        }
-                        InputEvent::TabMcp => {
-                            app.active_tab = app::Tab::Mcp;
-                        }
-                        InputEvent::ToggleProofHelp => {
-                            app.toggle_proof_help();
-                        }
-                        InputEvent::Unknown => {}
                     }
                 }
             }
@@ -837,6 +1138,32 @@ fn handle_tui_event(app: &mut App, event: TuiEvent) {
         TuiEvent::UpdateMcpState(state) => {
             app.update_mcp_state(state);
         }
+        TuiEvent::ContactCreated(contact) => {
+            // Add the new contact to the list
+            app.mcp_state.contacts.push(contact);
+        }
+        TuiEvent::ContactCreateFailed { four_words, error } => {
+            // Show error message
+            app.error_message = Some(format!("Failed to add {}: {}", four_words, error));
+        }
+        TuiEvent::ContactsUpdated(contacts) => {
+            // Replace the entire contacts list
+            app.mcp_state.contacts = contacts;
+        }
+        TuiEvent::MessageSent { recipient, .. } => {
+            app.info_message = Some(format!("Message sent to {}", recipient));
+        }
+        TuiEvent::MessageSendFailed { recipient, error } => {
+            app.error_message = Some(format!("Failed to send to {}: {}", recipient, error));
+        }
+        TuiEvent::MessagesLoaded(messages) => {
+            app.message_set_current(messages);
+        }
+        TuiEvent::MessageReceived(message) => {
+            // Add incoming message to current conversation
+            app.mcp_state.current_messages.push(message);
+            app.info_message = Some("New message received".to_string());
+        }
     }
 }
 
@@ -846,7 +1173,7 @@ fn handle_tui_event(app: &mut App, event: TuiEvent) {
 pub async fn run_standalone() -> anyhow::Result<()> {
     let app = App::new();
     let (tx, rx) = mpsc::channel(100);
-    run_tui(app, rx, tx).await
+    run_tui(app, rx, tx, None).await
 }
 
 #[cfg(test)]

@@ -311,13 +311,11 @@ fn test_stream_type_variants() -> Result<(), String> {
 }
 
 fn test_transport_config_creation() -> Result<(), String> {
-    use saorsa_gossip_transport::TransportConfig;
+    use ant_quic::TransportConfig;
 
-    let config = TransportConfig::default();
+    let _config = TransportConfig::default();
 
-    // Verify config fields are accessible (actual fields: enable_0rtt, enable_migration, etc.)
-    // Just verify default creation works
-    let _ = config.max_idle_timeout;
+    // Verify config creation works - fields are private so just test creation
 
     debug!("TransportConfig creation test passed");
     Ok(())

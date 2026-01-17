@@ -6,8 +6,6 @@
 //! automatic connections using REAL P2pEndpoint QUIC connections,
 //! and test traffic generation over actual QUIC streams.
 
-use crate::communitas::CommunitasRuntime;
-use crate::dht_metrics::{MetricsCollector, StatsBridge};
 use crate::epidemic_gossip::{
     ConnectionType as GossipConnectionType, EpidemicConfig, EpidemicEvent, EpidemicGossip,
     GossipStats,
@@ -27,7 +25,6 @@ use crate::tui::{
     NatTraversalPhase, NatTypeAnalytics, ProtocolFrame, TestConnectivityMethod, TrafficType,
     TuiEvent, country_flag, send_tui_event,
 };
-use hostname::get as get_hostname;
 use saorsa_gossip_types::PeerId as GossipPeerId;
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
@@ -39,6 +36,8 @@ use tokio::sync::{RwLock, mpsc};
 use tracing::{debug, error, info, warn};
 
 use ant_quic::{Node, P2pEndpoint, P2pEvent, PeerId as QuicPeerId};
+// TODO: Re-enable when communitas-core crate linking is fixed
+// use communitas_core::conn_words;
 use saorsa_gossip_transport::AntQuicTransport;
 // Import key types for persistence
 use ant_quic::crypto::raw_public_keys::key_utils::{
@@ -84,11 +83,6 @@ pub struct TestNodeConfig {
     /// If None, uses the default platform-specific data directory.
     /// Each node instance should use a unique data directory to have a unique peer ID.
     pub data_dir: Option<PathBuf>,
-    /// Enable DHT metrics collection.
-    /// When enabled, populates DHT/EigenTrust/Health TUI tabs with real data.
-    pub with_dht: bool,
-    /// Enable embedded Communitas MCP runtime with auto demo identity.
-    pub with_communitas: bool,
 }
 
 impl Default for TestNodeConfig {
@@ -109,10 +103,6 @@ impl Default for TestNodeConfig {
             gossip_first: true,
             // Use default data directory (platform-specific)
             data_dir: None,
-            // DHT metrics collection disabled by default
-            with_dht: false,
-            // Embedded Communitas runtime enabled by default
-            with_communitas: true,
         }
     }
 }
@@ -417,13 +407,6 @@ pub struct TestNode {
     full_mesh_probes: Arc<RwLock<HashMap<String, FullMeshProbeResult>>>,
     geo_provider: Arc<BgpGeoProvider>,
     fully_tested_peers: Arc<RwLock<HashSet<String>>>,
-    /// Optional DHT metrics collector (when --with-dht is enabled).
-    metrics_collector: Option<Arc<MetricsCollector>>,
-    /// Embedded Communitas runtime (demo identity).
-    #[allow(dead_code)]
-    communitas: Option<CommunitasRuntime>,
-    /// Start time for uptime calculation.
-    start_time: Instant,
 }
 
 /// Get the data directory for persistent storage.
@@ -607,30 +590,6 @@ impl TestNode {
             node.public_key_bytes().len()
         );
 
-        let device_name = get_hostname()
-            .map(|h| h.to_string_lossy().to_string())
-            .unwrap_or_else(|_| "saorsa-test-node".to_string());
-
-        let communitas = if config.with_communitas {
-            match CommunitasRuntime::launch(&quic_peer_id, &data_dir, &device_name).await {
-                Ok(runtime) => {
-                    info!(
-                        "Communitas demo identity ready: {} ({})",
-                        runtime.identity().four_words,
-                        runtime.identity().storage_dir.display()
-                    );
-                    Some(runtime)
-                }
-                Err(err) => {
-                    return Err(anyhow::anyhow!(format!(
-                        "Failed to start Communitas runtime: {err:?}"
-                    )));
-                }
-            }
-        } else {
-            None
-        };
-
         let actual_port = node
             .local_addr()
             .map(|a| a.port())
@@ -789,6 +748,11 @@ impl TestNode {
                         for a in addrs.iter() {
                             if a.is_ipv4() && local_node.external_ipv4.is_none() {
                                 local_node.external_ipv4 = Some(*a);
+                                // TODO: Re-enable when communitas-core crate linking is fixed
+                                // Calculate connection words from external IPv4:port
+                                // if let Ok(words) = conn_words(a) {
+                                //     local_node.connection_words = Some(words);
+                                // }
                             } else if a.is_ipv6() && local_node.external_ipv6.is_none() {
                                 local_node.external_ipv6 = Some(*a);
                             }
@@ -1405,9 +1369,6 @@ impl TestNode {
             }
         });
 
-        // Extract with_dht before moving config into the struct
-        let with_dht = config.with_dht;
-
         Ok(Self {
             listen_addresses,
             config,
@@ -1441,13 +1402,6 @@ impl TestNode {
             full_mesh_probes: Arc::new(RwLock::new(HashMap::new())),
             geo_provider,
             fully_tested_peers: Arc::new(RwLock::new(HashSet::new())),
-            metrics_collector: if with_dht {
-                Some(Arc::new(MetricsCollector::new()))
-            } else {
-                None
-            },
-            communitas,
-            start_time: Instant::now(),
         })
     }
 
@@ -3990,7 +3944,6 @@ impl TestNode {
         let nat_callback_handle = self.spawn_nat_callback_loop();
         let websocket_handle = self.spawn_websocket_event_loop();
         let proof_handle = self.spawn_proof_orchestrator_loop();
-        let metrics_handle = self.spawn_metrics_collection_loop();
 
         // Announce ourselves to gossip network
         self.announce_to_gossip().await;
@@ -4014,9 +3967,6 @@ impl TestNode {
         nat_callback_handle.abort();
         websocket_handle.abort();
         proof_handle.abort();
-        if let Some(handle) = metrics_handle {
-            handle.abort();
-        }
 
         // Save peer cache and shutdown gossip integration
         if let Err(e) = self.gossip_integration.save_cache() {
@@ -4117,6 +4067,11 @@ impl TestNode {
                         for addr in &external_addrs {
                             if addr.is_ipv4() && local_node.external_ipv4.is_none() {
                                 local_node.external_ipv4 = Some(*addr);
+                                // TODO: Re-enable when communitas-core crate linking is fixed
+                                // Calculate connection words from external IPv4:port
+                                // if let Ok(words) = conn_words(addr) {
+                                //     local_node.connection_words = Some(words);
+                                // }
                             } else if addr.is_ipv6() && local_node.external_ipv6.is_none() {
                                 local_node.external_ipv6 = Some(*addr);
                             }
@@ -6141,60 +6096,6 @@ impl TestNode {
                 );
             }
         })
-    }
-
-    /// Spawn a metrics collection loop that periodically sends DHT/EigenTrust/Health stats to the TUI.
-    ///
-    /// This loop only runs if `with_dht` is enabled in the configuration.
-    fn spawn_metrics_collection_loop(&self) -> Option<tokio::task::JoinHandle<()>> {
-        let metrics_collector = self.metrics_collector.clone()?;
-        let event_tx = self.event_tx.clone();
-        let shutdown = Arc::clone(&self.shutdown);
-        let start_time = self.start_time;
-        let connected_peers = Arc::clone(&self.connected_peers);
-
-        Some(tokio::spawn(async move {
-            info!("Started DHT metrics collection loop");
-
-            // Collect metrics every 5 seconds
-            let mut interval = tokio::time::interval(Duration::from_secs(5));
-
-            loop {
-                interval.tick().await;
-
-                if shutdown.load(Ordering::SeqCst) {
-                    break;
-                }
-
-                // Collect metrics from the aggregator
-                let snapshot = metrics_collector.collect().await;
-
-                // Update routing table metrics from connected peers
-                let peer_count = connected_peers.read().await.len() as u64;
-                metrics_collector.update_routing_table(peer_count, peer_count.min(20), 1.0);
-
-                // Calculate uptime
-                let uptime_secs = start_time.elapsed().as_secs();
-
-                // Convert to TUI types and send events
-                let dht_stats = StatsBridge::to_dht_stats(&snapshot);
-                let eigentrust_stats = StatsBridge::to_eigentrust_stats(&snapshot);
-                let placement_stats = StatsBridge::to_placement_stats(&snapshot);
-                let health_stats = StatsBridge::to_health_stats(&snapshot, uptime_secs);
-                let mcp_state = StatsBridge::default_mcp_state();
-
-                // Send TUI events
-                let _ = event_tx.try_send(TuiEvent::UpdateDhtStats(dht_stats));
-                let _ = event_tx.try_send(TuiEvent::UpdateEigenTrustStats(eigentrust_stats));
-                let _ = event_tx.try_send(TuiEvent::UpdatePlacementStats(placement_stats));
-                let _ = event_tx.try_send(TuiEvent::UpdateHealthStats(health_stats));
-                let _ = event_tx.try_send(TuiEvent::UpdateMcpState(mcp_state));
-
-                debug!("Sent DHT metrics update to TUI (uptime: {}s)", uptime_secs);
-            }
-
-            info!("DHT metrics collection loop stopped");
-        }))
     }
 
     async fn handle_connectivity_test_request(

@@ -57,6 +57,7 @@ sha2.workspace = true
 
 # Hex encoding for peer IDs
 hex.workspace = true
+base64.workspace = true
 
 # Binary data for gossip transport
 bytes.workspace = true
@@ -78,9 +79,11 @@ saorsa-gossip-identity.workspace = true
 saorsa-gossip-crdt-sync.workspace = true
 saorsa-gossip-groups.workspace = true
 saorsa-gossip-rendezvous.workspace = true
+saorsa-gossip-presence.workspace = true
 
-# Core types for health status conversion
-saorsa-core.workspace = true
+# Communitas MCP integration
+communitas-core.workspace = true
+communitas-mcp.workspace = true
 
 # Timestamp handling for history persistence
 chrono.workspace = true
@@ -103,10 +106,6 @@ clap.workspace = true
 
 # Local IP address discovery for local agents
 local-ip-address.workspace = true
-
-# Communitas integration for demo identities/runtime
-four-word-networking = "2.6"
-communitas-core = { path = "../../../communitas/communitas-core" }
 
 [dev-dependencies]
 tempfile = "3"

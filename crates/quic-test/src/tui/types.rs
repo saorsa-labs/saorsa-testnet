@@ -688,6 +688,9 @@ pub struct LocalNodeInfo {
     pub local_ipv6: Option<SocketAddr>,
     /// External IPv6 address (discovered)
     pub external_ipv6: Option<SocketAddr>,
+    /// Connection words (external IPv4:port encoded as 4 memorable words)
+    /// Share these out-of-band for first-time peer connections
+    pub connection_words: Option<String>,
     /// Whether registered with central registry
     pub registered: bool,
     /// Time until registration expires
@@ -706,6 +709,7 @@ impl Default for LocalNodeInfo {
             external_ipv4: None,
             local_ipv6: None,
             external_ipv6: None,
+            connection_words: None,
             registered: false,
             registration_expires_in: None,
             last_heartbeat: None,
@@ -2278,31 +2282,140 @@ pub struct ResourceUsage {
     pub active_connections: u32,
 }
 
+/// MCP tool category for sub-tab organization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum McpToolCategory {
+    #[default]
+    Auth,
+    Entities,
+    Messages,
+    Files,
+    Kanban,
+    Network,
+    Social,
+}
+
+impl McpToolCategory {
+    /// All categories in display order.
+    pub const ALL: [McpToolCategory; 7] = [
+        McpToolCategory::Auth,
+        McpToolCategory::Entities,
+        McpToolCategory::Messages,
+        McpToolCategory::Files,
+        McpToolCategory::Kanban,
+        McpToolCategory::Network,
+        McpToolCategory::Social,
+    ];
+
+    /// Get display name for the category.
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            McpToolCategory::Auth => "Auth",
+            McpToolCategory::Entities => "Entities",
+            McpToolCategory::Messages => "Messages",
+            McpToolCategory::Files => "Files",
+            McpToolCategory::Kanban => "Kanban",
+            McpToolCategory::Network => "Network",
+            McpToolCategory::Social => "Social",
+        }
+    }
+
+    /// Get short key hint for the category.
+    pub fn key_hint(&self) -> &'static str {
+        match self {
+            McpToolCategory::Auth => "1",
+            McpToolCategory::Entities => "2",
+            McpToolCategory::Messages => "3",
+            McpToolCategory::Files => "4",
+            McpToolCategory::Kanban => "5",
+            McpToolCategory::Network => "6",
+            McpToolCategory::Social => "7",
+        }
+    }
+
+    /// Next category (wrapping).
+    pub fn next(&self) -> McpToolCategory {
+        match self {
+            McpToolCategory::Auth => McpToolCategory::Entities,
+            McpToolCategory::Entities => McpToolCategory::Messages,
+            McpToolCategory::Messages => McpToolCategory::Files,
+            McpToolCategory::Files => McpToolCategory::Kanban,
+            McpToolCategory::Kanban => McpToolCategory::Network,
+            McpToolCategory::Network => McpToolCategory::Social,
+            McpToolCategory::Social => McpToolCategory::Auth,
+        }
+    }
+
+    /// Previous category (wrapping).
+    pub fn prev(&self) -> McpToolCategory {
+        match self {
+            McpToolCategory::Auth => McpToolCategory::Social,
+            McpToolCategory::Entities => McpToolCategory::Auth,
+            McpToolCategory::Messages => McpToolCategory::Entities,
+            McpToolCategory::Files => McpToolCategory::Messages,
+            McpToolCategory::Kanban => McpToolCategory::Files,
+            McpToolCategory::Network => McpToolCategory::Kanban,
+            McpToolCategory::Social => McpToolCategory::Network,
+        }
+    }
+}
+
 /// MCP client state for the MCP tab [0].
 /// Displays connection, tools, and invocation history.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct McpState {
+    /// Four-word identity (e.g., "ocean-forest-moon-star")
+    pub four_words: Option<String>,
     /// Connection status
     pub connection: McpConnectionStatus,
     /// Server information
     pub server_info: Option<McpServerInfo>,
     /// Available tools
     pub tools: Vec<McpTool>,
-    /// Currently selected tool index
+    /// Currently selected category sub-tab
+    pub selected_category: McpToolCategory,
+    /// Currently selected tool index (within category)
     pub selected_tool: Option<usize>,
-    /// Parameter inputs for selected tool
+    /// Parameter inputs for selected tool (param_name -> value)
     pub parameter_inputs: std::collections::HashMap<String, String>,
+    /// Input mode: which parameter index is being edited (None = not editing)
+    pub editing_param: Option<usize>,
     /// Invocation history
     pub history: Vec<McpInvocation>,
     /// Last error message
     pub last_error: Option<String>,
     /// MCP endpoint URL
     pub endpoint: Option<String>,
+    /// Contacts list
+    pub contacts: Vec<ContactDisplay>,
+    /// Currently selected contact index (for navigation)
+    pub selected_contact: Option<usize>,
+    /// Contact add mode: typing a four-word ID to add
+    pub adding_contact: Option<String>,
+    /// Message being composed (None = not composing)
+    pub composing_message: Option<String>,
+    /// Messages with currently selected contact
+    pub current_messages: Vec<MessageDisplay>,
+}
+
+/// Message display information for TUI.
+#[derive(Debug, Clone)]
+pub struct MessageDisplay {
+    /// Message ID
+    pub id: String,
+    /// Message text
+    pub text: String,
+    /// Author's display name or four-word ID
+    pub author: String,
+    /// Whether this is from us (true) or them (false)
+    pub is_outgoing: bool,
+    /// Formatted timestamp
+    pub timestamp: String,
+    /// Whether edited
+    pub edited: bool,
 }
 
 /// MCP connection status.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum McpConnectionStatus {
     #[default]
@@ -2310,29 +2423,6 @@ pub enum McpConnectionStatus {
     Connecting,
     Connected,
     Error,
-}
-
-#[allow(dead_code)]
-impl McpConnectionStatus {
-    /// Get color for display.
-    pub fn color_name(&self) -> &'static str {
-        match self {
-            Self::Disconnected => "gray",
-            Self::Connecting => "yellow",
-            Self::Connected => "green",
-            Self::Error => "red",
-        }
-    }
-
-    /// Get symbol for display.
-    pub fn symbol(&self) -> &'static str {
-        match self {
-            Self::Disconnected => "○",
-            Self::Connecting => "◌",
-            Self::Connected => "●",
-            Self::Error => "✗",
-        }
-    }
 }
 
 /// MCP server information.
@@ -2350,13 +2440,14 @@ pub struct McpServerInfo {
 }
 
 /// MCP tool definition.
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct McpTool {
     /// Tool name
     pub name: String,
     /// Tool description
     pub description: String,
+    /// Tool category
+    pub category: McpToolCategory,
     /// Input schema (JSON schema)
     pub parameters: Vec<McpParameter>,
 }
@@ -2403,6 +2494,55 @@ pub enum McpInvocationResult {
     Error(String),
     /// Pending (still executing)
     Pending,
+}
+
+/// Contact information for TUI display.
+#[derive(Debug, Clone)]
+pub struct ContactDisplay {
+    /// Contact ID
+    pub id: String,
+    /// Display name
+    pub display_name: String,
+    /// Four-word identity (if linked to network)
+    pub four_words: Option<String>,
+    /// Whether favourite
+    pub is_favourite: bool,
+    /// Online status (based on presence)
+    pub status: ContactOnlineStatus,
+    /// Last seen timestamp (formatted string)
+    pub last_seen: Option<String>,
+}
+
+/// Contact online status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ContactOnlineStatus {
+    #[default]
+    Unknown,
+    Online,
+    Away,
+    Offline,
+}
+
+impl ContactOnlineStatus {
+    /// Get status indicator dot.
+    pub fn dot(&self) -> &'static str {
+        match self {
+            Self::Online => "●",  // Green in UI
+            Self::Away => "◐",    // Yellow in UI
+            Self::Offline => "○", // Gray in UI
+            Self::Unknown => "?",
+        }
+    }
+
+    /// Get color name for display.
+    pub fn color_name(&self) -> &'static str {
+        match self {
+            Self::Online => "green",
+            Self::Away => "yellow",
+            Self::Offline => "gray",
+            Self::Unknown => "gray",
+        }
+    }
 }
 
 #[allow(dead_code)]

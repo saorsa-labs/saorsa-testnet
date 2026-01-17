@@ -1,4 +1,6 @@
 #![recursion_limit = "512"]
+// TODO: Migrate PeerCache/PeerCacheEntry to GossipCacheAdapter with bootstrap_cache
+#![allow(deprecated)]
 
 //! ant-quic Test Network Infrastructure
 //!
@@ -62,11 +64,9 @@
 //! ```
 
 pub mod bootstrap_peers;
-pub mod communitas;
 pub mod crdt_verification;
 pub mod dashboard;
 pub mod debug_automation;
-pub mod dht_metrics;
 pub mod epidemic_gossip;
 pub mod gossip;
 pub mod gossip_tests;
@@ -74,6 +74,8 @@ pub mod gossip_verification;
 pub mod harness;
 pub mod history;
 pub mod lib_verification;
+// TODO: Re-enable when communitas-core APIs are stable
+// pub mod mcp;
 pub mod node;
 pub mod orchestrator;
 pub mod peer_discovery;
@@ -181,8 +183,6 @@ pub use lib_verification::{
     VerificationConfig, print_summary as print_verification_summary, verify_all_libraries,
 };
 
-pub use dht_metrics::{MetricsCollector, StatsBridge};
-
 // Re-export ant-quic types for unified transport abstraction
 pub use ant_quic::{
     BoxedHandler, Capabilities, ConnectionStats, LinkConn, LinkEvent, LinkRecvStream,
@@ -190,3 +190,6 @@ pub use ant_quic::{
     SharedTransport, StreamFilter, StreamType, StreamTypeFamily, TransportError,
 };
 pub use saorsa_gossip_transport::GossipStreamType;
+
+// TODO: Re-enable when communitas-core APIs are stable
+// pub use mcp::{McpClient, McpClientConfig, McpToolCategory, ToolInfo};
