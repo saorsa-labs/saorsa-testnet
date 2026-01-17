@@ -30,10 +30,10 @@ saorsa-gossip-groups = "0.2"
 saorsa-gossip-rendezvous = "0.2"
 saorsa-gossip-presence = "0.2"
 
-# Communitas (path deps until crates.io index refreshes)
-communitas-core = { path = "../communitas/communitas-core" }
-communitas-mcp = { path = "../communitas/communitas-mcp" }
-communitas-kanban = { path = "../communitas/communitas-kanban" }
+# Communitas dependencies disabled - MCP module not yet stable
+# communitas-core = { path = "../communitas/communitas-core" }
+# communitas-mcp = { path = "../communitas/communitas-mcp" }
+# communitas-kanban = { path = "../communitas/communitas-kanban" }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }

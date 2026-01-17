@@ -81,9 +81,9 @@ saorsa-gossip-groups.workspace = true
 saorsa-gossip-rendezvous.workspace = true
 saorsa-gossip-presence.workspace = true
 
-# Communitas MCP integration
-communitas-core.workspace = true
-communitas-mcp.workspace = true
+# Communitas MCP integration - disabled until crate linking stabilized
+# communitas-core.workspace = true
+# communitas-mcp.workspace = true
 
 # Timestamp handling for history persistence
 chrono.workspace = true
