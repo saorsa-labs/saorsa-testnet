@@ -106,6 +106,7 @@ clap.workspace = true
 
 # Local IP address discovery for local agents
 local-ip-address.workspace = true
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 
 [dev-dependencies]
 tempfile = "3"

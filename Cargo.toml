@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/quic-test",
+    "workspace-hack",
     # Future test modules:
     # "crates/gossip-test",
     # "crates/core-test",
