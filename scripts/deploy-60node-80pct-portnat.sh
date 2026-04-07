@@ -41,9 +41,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # PINNED CONFIGURATION — DO NOT LET AI CHANGE THESE
 # =============================================================================
 
-# Git source: saorsa-testnet repo, RC branch
-TESTNET_BRANCH="main"   # saorsa-testnet builds from its own main
-
 # Transport + core versions are pinned via Cargo.lock in the testnet repo.
 # The testnet repo's Cargo.lock references:
 #   saorsa-transport from git branch rc-2026.4.1
@@ -57,7 +54,6 @@ BINARY_PATH="/usr/local/bin/${BINARY_NAME}"
 # Registry
 REGISTRY_HOST="saorsa-1.saorsalabs.com"
 REGISTRY_URL="https://${REGISTRY_HOST}"
-REGISTRY_IP="77.42.75.115"
 
 # Network parameters — these are FIXED, do not vary
 NODES_PER_VPS=7          # 7 nodes x 9 VPSes = 63 nodes (close to 60)
@@ -146,7 +142,7 @@ print_config() {
 # =============================================================================
 
 do_build() {
-    log "Building ${BINARY_NAME} for x86_64-unknown-linux-gnu..."
+    log "Building ${BINARY_NAME} for x86_64-unknown-linux-gnu..." >&2
 
     local repo_dir="${SCRIPT_DIR}/.."
     cd "${repo_dir}"
@@ -154,8 +150,8 @@ do_build() {
     # Record the exact commit being built
     local commit
     commit=$(git rev-parse HEAD)
-    log "Commit: ${commit}"
-    log "Branch: $(git branch --show-current)"
+    log "Commit: ${commit}" >&2
+    log "Branch: $(git branch --show-current)" >&2
 
     # Check for cargo-zigbuild
     if ! command -v cargo-zigbuild &>/dev/null; then
@@ -163,7 +159,7 @@ do_build() {
         exit 1
     fi
 
-    cargo zigbuild --release --target x86_64-unknown-linux-gnu --bin "${BINARY_NAME}" 2>&1 | tail -5
+    cargo zigbuild --release --target x86_64-unknown-linux-gnu --bin "${BINARY_NAME}" 2>&1 | tail -5 >&2
 
     local built="target/x86_64-unknown-linux-gnu/release/${BINARY_NAME}"
     if [[ ! -f "${built}" ]]; then
@@ -171,7 +167,7 @@ do_build() {
         exit 1
     fi
 
-    log "Built: ${built} ($(stat -f%z "${built}" 2>/dev/null || stat -c%s "${built}") bytes)"
+    log "Built: ${built} ($(stat -f%z "${built}" 2>/dev/null || stat -c%s "${built}") bytes)" >&2
     echo "${built}"
 }
 
@@ -213,7 +209,8 @@ do_setup_nat() {
         if "${nat_scripts}/deploy-to-node.sh" "${ip}" "${nat_type}"; then
             log "  [${name}] NAT ${nat_type} OK"
         else
-            err "  [${name}] NAT setup FAILED"
+            err "  [${name}] NAT setup FAILED -- aborting to preserve determinism"
+            exit 1
         fi
     done
     log "NAT simulation configured on all nodes."
@@ -285,7 +282,7 @@ REMOTE_EOF
 do_stop_nodes() {
     log "Stopping all nodes..."
     for ip in $(all_ips); do
-        local name="${VPS_NAMES[$ip]}"
+        log "  Stopping ${VPS_NAMES[$ip]}..."
         ssh_node "${ip}" "pkill -9 ${BINARY_NAME} 2>/dev/null || true" &
     done
     wait
