@@ -100,6 +100,40 @@ layouts.py            -- predefined VM layouts
 ssh_utils.py          -- SSH/SCP via subprocess
 ```
 
+## Testing with Custom (Patched) Binaries
+
+To test a locally-built ant-node with patches applied:
+
+```bash
+# 1. Build patched binary (from ant-node repo)
+cd ant-node
+git checkout v0.10.0-rc.13
+cargo zigbuild --release --target x86_64-unknown-linux-gnu --bin ant-node \
+    --config 'patch."https://github.com/saorsa-labs/saorsa-core.git".saorsa-core.path="../saorsa-core"' \
+    --config 'patch."https://github.com/saorsa-labs/saorsa-transport.git".saorsa-transport.path="../saorsa-transport"'
+
+# 2. Run test with patched binary
+cd saorsa-testnet/scripts/nat-testnet
+python3 run_patched_test.py \
+    --binary ../../ant-node/target/x86_64-unknown-linux-gnu/release/ant-node \
+    --name my-patch-test \
+    --uploads 3
+
+# 3. Keep VMs alive for debugging
+python3 run_patched_test.py \
+    --binary /path/to/ant-node \
+    --name debug-session \
+    --skip-destroy
+```
+
+Requires: `cargo-zigbuild` + `zig` (`cargo install cargo-zigbuild && brew install zig`).
+
+## Test Results
+
+See `results/` directory for recorded test outcomes:
+
+- `2026-04-08-round1-fix-test.md` — First successful NAT testnet upload (3/3 uploads, 44-45s each)
+
 ## Known Issues / Design Decisions
 
 - SSH is always via Python `subprocess` (bash while-read loops break cargo aliases)
