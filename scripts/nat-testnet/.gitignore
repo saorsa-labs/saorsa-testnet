@@ -1,0 +1,17 @@
+# Testnet state (VM IPs, credentials, etc.)
+state/
+
+# Environment files with API tokens
+.env
+*.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Collected logs
+logs/
+
+# Test data
+test-data/
